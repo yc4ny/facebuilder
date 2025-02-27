@@ -11,7 +11,7 @@ def update_all_landmarks(state):
         i0, i1, i2 = state.faces[f_idx]
         v0, v1, v2 = state.verts2d[i0], state.verts2d[i1], state.verts2d[i2]
         state.landmark_positions[i] = bc[0]*v0 + bc[1]*v1 + bc[2]*v2
-
+        
 def align_face(state):
     """Align the 3D face model to detected face landmarks"""
     # Convert to grayscale for face detection
