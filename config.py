@@ -1,3 +1,4 @@
+# Copyright (c) CUBOX, Inc. and its affiliates.
 from enum import Enum
 
 # UI Constants

@@ -1,3 +1,4 @@
+# Copyright (c) CUBOX, Inc. and its affiliates.
 import cv2
 from config import Mode
 from model.pins import add_custom_pin, update_custom_pins

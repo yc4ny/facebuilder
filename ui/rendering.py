@@ -1,3 +1,4 @@
+# Copyright (c) CUBOX, Inc. and its affiliates.
 import cv2
 import numpy as np
 from config import WINDOW_NAME, Mode

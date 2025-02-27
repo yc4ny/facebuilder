@@ -1,3 +1,4 @@
+# Copyright (c) CUBOX, Inc. and its affiliates.
 import numpy as np
 from config import UI_BUTTON_HEIGHT_RATIO, UI_BUTTON_MARGIN_RATIO, UI_TEXT_SIZE_RATIO, UI_LINE_THICKNESS_RATIO
 

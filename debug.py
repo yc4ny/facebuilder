@@ -1,3 +1,4 @@
+# Copyright (c) CUBOX, Inc. and its affiliates.
 import cv2
 import dlib
 import numpy as np
