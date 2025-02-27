@@ -1,4 +1,5 @@
 import numpy as np
+import cv2 
 
 def add_custom_pin(x, y, state):
     """Add a new custom pin at the given coordinates"""
@@ -57,47 +58,69 @@ def remove_pins(state):
     state.callbacks['redraw'](state)
 
 def center_geo(state):
-    """Reset the mesh to its default position"""
+    """Reset the mesh to its default position and clear any camera parameters"""
+    # Reset to default positions
     state.verts2d = state.verts2d_default.copy()
     state.landmark_positions = state.landmark_positions_default.copy()
-    state.callbacks['update_custom_pins'](state)  # Update pin positions based on the reset mesh
+    
+    # Clear camera parameters for the current image
+    # ensure no alignment parameters remain
+    state.camera_matrices[state.current_image_idx] = None
+    state.rotations[state.current_image_idx] = None
+    state.translations[state.current_image_idx] = None
+    
+    state.callbacks['update_custom_pins'](state)
     
     print("Reset mesh to default position")
     state.callbacks['redraw'](state)
 
 def reset_shape(state):
-    """Reset the mesh shape to default while maintaining current position/orientation"""
-    import numpy as np
-    import cv2
+    """Reset only the FLAME shape parameters while preserving position and orientation"""
     
-    # If we have a camera matrix and rotation/translation for this view, we can use it
+    # Store the current transformation
+    current_center = np.mean(state.verts2d, axis=0)
+    current_scale = np.mean(np.linalg.norm(state.verts2d - current_center, axis=1))
+    
+    # Reset to default shape
     if state.camera_matrices[state.current_image_idx] is not None:
-        # Get the current camera parameters
+        # If we have camera parameters, project the default 3D vertices
         camera_matrix = state.camera_matrices[state.current_image_idx]
         rvec = state.rotations[state.current_image_idx]
         tvec = state.translations[state.current_image_idx]
         
         # Project default 3D vertices to 2D using current camera parameters
-        # This maintains the current position and orientation but resets the shape
         projected_verts, _ = cv2.projectPoints(
             np.array(state.verts3d_default, dtype=np.float32),
             rvec, tvec, camera_matrix, np.zeros((4, 1))
         )
-        state.verts2d = projected_verts.reshape(-1, 2)
+        new_verts = projected_verts.reshape(-1, 2)
         
-        # Recalculate landmark positions from the default 3D landmarks
+        # Project default landmarks
         projected_landmarks, _ = cv2.projectPoints(
             np.array(state.landmark3d_default, dtype=np.float32),
             rvec, tvec, camera_matrix, np.zeros((4, 1))
         )
-        state.landmark_positions = projected_landmarks.reshape(-1, 2)
+        new_landmarks = projected_landmarks.reshape(-1, 2)
     else:
-        # If we don't have camera parameters yet, just reset to default 2D positions
-        state.verts2d = state.verts2d_default.copy()
-        state.landmark_positions = state.landmark_positions_default.copy()
+        # If no camera parameters, use 2D default with current transformation
+        new_verts = state.verts2d_default.copy()
+        new_landmarks = state.landmark_positions_default.copy()
+        
+        # Apply the current transformation (center and scale)
+        new_center = np.mean(new_verts, axis=0)
+        new_scale = np.mean(np.linalg.norm(new_verts - new_center, axis=1))
+        
+        # Scale to match current size
+        scale_factor = current_scale / new_scale
+        new_verts = (new_verts - new_center) * scale_factor + current_center
+        new_landmarks = (new_landmarks - new_center) * scale_factor + current_center
+    
+    # Update the vertices and landmarks
+    state.verts2d = new_verts
+    state.landmark_positions = new_landmarks
     
     # Update custom pins based on the reset mesh
     state.callbacks['update_custom_pins'](state)
     
-    print("Reset mesh shape to default while maintaining position")
+    print("Reset mesh shape to default while preserving position and orientation")
     state.callbacks['redraw'](state)
