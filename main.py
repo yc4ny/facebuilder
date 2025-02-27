@@ -4,6 +4,7 @@ import numpy as np
 import cv2
 import dlib
 import os
+import mediapipe as mp
 
 from config import WINDOW_NAME, Mode
 from utils.file_io import load_images_from_directory, save_model, save_to_obj
@@ -52,8 +53,24 @@ class FaceBuilderState:
         self.translations = []  # Translation vectors for each view
         
         # Initialize face detector and predictor
+        # We keep dlib for landmark detection and as a fallback detector
         self.dlib_detector = dlib.get_frontal_face_detector()
         self.dlib_predictor = dlib.shape_predictor("data/shape_predictor_68_face_landmarks.dat")
+        
+        # Initialize MediaPipe for better face detection
+        try:
+            import mediapipe as mp
+            self.mp_face_detection = mp.solutions.face_detection
+            self.mp_face_detector = self.mp_face_detection.FaceDetection(
+                min_detection_confidence=0.3,
+                model_selection=1  # Full-range model for profile views
+            )
+            print("MediaPipe face detection initialized successfully")
+        except ImportError:
+            print("MediaPipe not found. Install with: pip install mediapipe")
+            print("Continuing with dlib detector only")
+            self.mp_face_detection = None
+            self.mp_face_detector = None
         
         # UI dimensions
         self.ui_dimensions = None
@@ -68,7 +85,7 @@ class FaceBuilderState:
             'save_model': self.save_model,
             'remove_pins': remove_pins,
             'center_geo': center_geo,
-            'reset_shape': reset_shape,  # Add this line
+            'reset_shape': reset_shape,
             'update_custom_pins': update_custom_pins
         }
     

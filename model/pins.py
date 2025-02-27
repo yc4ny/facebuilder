@@ -95,27 +95,49 @@ def reset_shape(state):
     current_scale = np.mean(np.linalg.norm(state.verts2d - current_center, axis=1))
     
     # Reset to default shape
-    if state.camera_matrices[state.current_image_idx] is not None:
-        # If we have camera parameters, project the default 3D vertices
+    if (state.camera_matrices[state.current_image_idx] is not None and 
+        state.rotations[state.current_image_idx] is not None and 
+        state.translations[state.current_image_idx] is not None):
+        
         camera_matrix = state.camera_matrices[state.current_image_idx]
         rvec = state.rotations[state.current_image_idx]
         tvec = state.translations[state.current_image_idx]
         
-        # Project default 3D vertices to 2D using current camera parameters
-        projected_verts, _ = cv2.projectPoints(
-            np.array(state.verts3d_default, dtype=np.float32),
-            rvec, tvec, camera_matrix, np.zeros((4, 1))
-        )
-        new_verts = projected_verts.reshape(-1, 2)
-        
-        # Project default landmarks
-        projected_landmarks, _ = cv2.projectPoints(
-            np.array(state.landmark3d_default, dtype=np.float32),
-            rvec, tvec, camera_matrix, np.zeros((4, 1))
-        )
-        new_landmarks = projected_landmarks.reshape(-1, 2)
+        # Try to use projectPoints if we have valid rotation and translation vectors
+        try:
+            # Project default 3D vertices to 2D using current camera parameters
+            projected_verts, _ = cv2.projectPoints(
+                np.array(state.verts3d_default, dtype=np.float32),
+                rvec, tvec, camera_matrix, np.zeros((4, 1))
+            )
+            new_verts = projected_verts.reshape(-1, 2)
+            
+            # Project default landmarks
+            projected_landmarks, _ = cv2.projectPoints(
+                np.array(state.landmark3d_default, dtype=np.float32),
+                rvec, tvec, camera_matrix, np.zeros((4, 1))
+            )
+            new_landmarks = projected_landmarks.reshape(-1, 2)
+            
+            print("Used 3D projection for reset")
+            
+        except cv2.error:
+            # Fall back to 2D transformation if projectPoints fails
+            print("3D projection failed, using 2D transformation instead")
+            new_verts = state.verts2d_default.copy()
+            new_landmarks = state.landmark_positions_default.copy()
+            
+            # Apply the current transformation (center and scale)
+            new_center = np.mean(new_verts, axis=0)
+            new_scale = np.mean(np.linalg.norm(new_verts - new_center, axis=1))
+            
+            # Scale to match current size
+            scale_factor = current_scale / new_scale
+            new_verts = (new_verts - new_center) * scale_factor + current_center
+            new_landmarks = (new_landmarks - new_center) * scale_factor + current_center
     else:
-        # If no camera parameters, use 2D default with current transformation
+        # Use 2D transformation for MediaPipe-based alignment
+        print("Using 2D transformation for reset")
         new_verts = state.verts2d_default.copy()
         new_landmarks = state.landmark_positions_default.copy()
         
@@ -123,10 +145,27 @@ def reset_shape(state):
         new_center = np.mean(new_verts, axis=0)
         new_scale = np.mean(np.linalg.norm(new_verts - new_center, axis=1))
         
-        # Scale to match current size
-        scale_factor = current_scale / new_scale
-        new_verts = (new_verts - new_center) * scale_factor + current_center
-        new_landmarks = (new_landmarks - new_center) * scale_factor + current_center
+        # If we have a transformation matrix from MediaPipe alignment
+        if state.camera_matrices[state.current_image_idx] is not None:
+            # Extract scale from the transformation matrix
+            transform_matrix = state.camera_matrices[state.current_image_idx]
+            if transform_matrix.shape[0] >= 2 and transform_matrix.shape[1] >= 2:
+                scale_factor = transform_matrix[0, 0]  # Scale is stored in the first diagonal element
+                translation = state.translations[state.current_image_idx]
+                
+                # Apply the transformation
+                new_verts = (new_verts - new_center) * scale_factor + current_center
+                new_landmarks = (new_landmarks - new_center) * scale_factor + current_center
+            else:
+                # Fall back to simple scaling if the matrix doesn't have the expected shape
+                scale_factor = current_scale / new_scale
+                new_verts = (new_verts - new_center) * scale_factor + current_center
+                new_landmarks = (new_landmarks - new_center) * scale_factor + current_center
+        else:
+            # Simple scaling if we don't have any camera parameters
+            scale_factor = current_scale / new_scale
+            new_verts = (new_verts - new_center) * scale_factor + current_center
+            new_landmarks = (new_landmarks - new_center) * scale_factor + current_center
     
     # Update the vertices and landmarks
     state.verts2d = new_verts
