@@ -73,5 +73,9 @@ def align_face(state):
     # Update custom pins based on the new mesh
     state.callbacks['update_custom_pins'](state)
     
+    # Restore landmark pins visibility when aligning face
+    if hasattr(state, 'landmark_pins_hidden'):
+        state.landmark_pins_hidden = False
+    
     print(f"Alignment complete for image {state.current_image_idx+1}.")
     state.callbacks['redraw'](state)

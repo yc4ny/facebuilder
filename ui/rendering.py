@@ -24,8 +24,10 @@ def redraw(state):
         cv2.circle(disp, (int(round(x)), int(round(y))), ui['vertex_radius'], (255,0,0), -1)
     
     # Draw landmarks
-    for (lx, ly) in state.landmark_positions:
-        cv2.circle(disp, (int(round(lx)), int(round(ly))), ui['landmark_radius'], (0,0,255), -1)
+    landmark_pins_hidden = hasattr(state, 'landmark_pins_hidden') and state.landmark_pins_hidden
+    if not landmark_pins_hidden:
+        for (lx, ly) in state.landmark_positions:
+            cv2.circle(disp, (int(round(lx)), int(round(ly))), ui['landmark_radius'], (0,0,255), -1)
     
     # Draw custom pins for the current image 
     for i, (px, py, _, _) in enumerate(state.pins_per_image[state.current_image_idx]):

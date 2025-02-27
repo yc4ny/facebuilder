@@ -1,3 +1,4 @@
+
 # Copyright (c) CUBOX, Inc. and its affiliates.
 import numpy as np
 import cv2 
@@ -53,9 +54,20 @@ def update_custom_pins(state):
     state.pins_per_image[state.current_image_idx] = updated_pins
 
 def remove_pins(state):
-    """Remove all custom pins from the current image"""
-    state.pins_per_image[state.current_image_idx] = []
-    print("Removed all pins from current image")
+    """Remove custom pins or landmark pins from the current image"""
+    # First check if there are any custom pins
+    if len(state.pins_per_image[state.current_image_idx]) > 0:
+        # Remove all custom pins (original behavior)
+        state.pins_per_image[state.current_image_idx] = []
+        print("Removed all custom pins from current image")
+    else:
+        # If no custom pins exist, permanently hide landmark pins
+        # We'll use a simple flag since we can't really delete the landmarks
+        # (they're needed for the underlying mesh structure)
+        state.landmark_pins_hidden = True
+        print("Landmark pins removed")
+    
+    # Redraw to update the display
     state.callbacks['redraw'](state)
 
 def center_geo(state):
