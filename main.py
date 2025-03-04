@@ -14,7 +14,7 @@ from ui.rendering import redraw
 from ui.input import on_mouse
 from model.mesh import move_mesh_2d, update_3d_vertices, project_current_3d_to_2d
 from model.landmarks import update_all_landmarks, align_face
-from model.pins import add_custom_pin, update_custom_pins, remove_pins, center_geo, reset_shape
+from model.pins import add_custom_pin, update_custom_pins, remove_pins, center_geo, reset_shape, synchronize_pins_across_views
 
 class FaceBuilderState:
     """Class to hold the state of the Face Builder application"""
@@ -100,7 +100,8 @@ class FaceBuilderState:
             'reset_shape': reset_shape,
             'update_custom_pins': update_custom_pins,
             'update_3d_vertices': update_3d_vertices,
-            'project_2d': project_current_3d_to_2d
+            'project_2d': project_current_3d_to_2d,
+            'synchronize_pins': synchronize_pins_across_views  # Add synchronization callback
         }
     
     def update_ui(self, state=None):
@@ -142,6 +143,9 @@ class FaceBuilderState:
     
     def save_model(self, state=None):
         """Save the current 3D model to file"""
+        # Make sure pins are up-to-date across all views before saving
+        synchronize_pins_across_views(self)
+        
         save_model(
             self.verts2d, 
             self.verts3d,  # Now using the modified 3D vertices
@@ -281,6 +285,7 @@ def main():
     print("- Drag landmarks or custom pins to manipulate the 3D mesh")
     print("- Press ESC to exit\n")
     print("NEW FEATURE: 3D deformations are now preserved across all views!")
+    print("NEW FEATURE: Pins are automatically synchronized across all views!")
     
     redraw(state)
     

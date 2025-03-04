@@ -1,7 +1,7 @@
 # Copyright (c) CUBOX, Inc. and its affiliates.
 import cv2
 from config import Mode
-from model.pins import add_custom_pin, update_custom_pins
+from model.pins import add_custom_pin, update_custom_pins, synchronize_pins_across_views
 from model.mesh import move_mesh_2d
 from model.landmarks import update_all_landmarks
 
@@ -80,12 +80,15 @@ def on_mouse(event, x, y, flags, _, state):
             landmark_radius_sq = (ui['landmark_radius'] * 1.5) ** 2
             
             # Check if click is on a custom pin first
-            for i, (px, py, _, _) in enumerate(state.pins_per_image[state.current_image_idx]):
-                dx, dy = px - x, py - y
-                if dx*dx + dy*dy < pin_radius_sq:
-                    state.drag_index = i + len(state.landmark_positions)  # Offset by landmark count
-                    state.drag_offset = (px - x, py - y)
-                    return
+            for i, pin_data in enumerate(state.pins_per_image[state.current_image_idx]):
+                # Handle both 4-tuple and 5-tuple pin formats for backward compatibility
+                if len(pin_data) >= 2:  # At minimum we need x,y
+                    px, py = pin_data[0], pin_data[1]
+                    dx, dy = px - x, py - y
+                    if dx*dx + dy*dy < pin_radius_sq:
+                        state.drag_index = i + len(state.landmark_positions)  # Offset by landmark count
+                        state.drag_offset = (px - x, py - y)
+                        return
             
             # In TOGGLE_PINS mode, we don't check for landmarks
             if state.mode != Mode.TOGGLE_PINS:
@@ -105,27 +108,60 @@ def on_mouse(event, x, y, flags, _, state):
                 nx = x + state.drag_offset[0]
                 ny = y + state.drag_offset[1]
                 dx, dy = nx - ox, ny - oy
+                
+                # Move mesh in 2D and update 3D vertices
                 move_mesh_2d(state, ox, oy, dx, dy)
+                
+                # Update landmarks and custom pins
                 update_all_landmarks(state)
+                update_custom_pins(state)
+            
             # Handle dragging custom pins
             else:
                 pin_idx = state.drag_index - len(state.landmark_positions)
                 if pin_idx < len(state.pins_per_image[state.current_image_idx]):
-                    ox, oy, face_idx, bc = state.pins_per_image[state.current_image_idx][pin_idx]
+                    pin_data = state.pins_per_image[state.current_image_idx][pin_idx]
+                    
+                    # Support both 4-tuple and 5-tuple pin formats
+                    ox, oy = pin_data[0], pin_data[1]
+                    face_idx = pin_data[2]
+                    bc = pin_data[3]
+                    
+                    # Get 3D position if available (5-tuple format)
+                    pin_pos_3d = None
+                    if len(pin_data) >= 5:
+                        pin_pos_3d = pin_data[4]
+                    
                     nx = x + state.drag_offset[0]
                     ny = y + state.drag_offset[1]
                     dx, dy = nx - ox, ny - oy
                     
                     if state.mode == Mode.TOGGLE_PINS:
                         # In toggle pins mode, just move the pin without affecting the mesh
-                        state.pins_per_image[state.current_image_idx][pin_idx] = (nx, ny, face_idx, bc)
+                        if pin_pos_3d is not None:
+                            # 5-tuple format
+                            state.pins_per_image[state.current_image_idx][pin_idx] = (nx, ny, face_idx, bc, pin_pos_3d)
+                        else:
+                            # 4-tuple format
+                            state.pins_per_image[state.current_image_idx][pin_idx] = (nx, ny, face_idx, bc)
                     else:
                         # In regular mode, move the mesh with the pin
+                        # This will update both 2D and 3D vertices
                         move_mesh_2d(state, ox, oy, dx, dy)
+                        
+                        # Update landmarks and all pins
                         update_all_landmarks(state)
                         update_custom_pins(state)
             
             state.callbacks['redraw'](state)
 
     elif event == cv2.EVENT_LBUTTONUP:
+        if state.drag_index != -1:
+            # After finishing a drag operation, synchronize pins across all views
+            if hasattr(state.callbacks, 'synchronize_pins') and callable(state.callbacks['synchronize_pins']):
+                state.callbacks['synchronize_pins'](state)
+            elif 'synchronize_pins_across_views' in globals():
+                # Call it directly if it's in globals
+                synchronize_pins_across_views(state)
+                
         state.drag_index = -1

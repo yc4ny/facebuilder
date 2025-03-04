@@ -29,10 +29,13 @@ def redraw(state):
         for (lx, ly) in state.landmark_positions:
             cv2.circle(disp, (int(round(lx)), int(round(ly))), ui['landmark_radius'], (0,0,255), -1)
     
-    # Draw custom pins for the current image 
-    for i, (px, py, _, _) in enumerate(state.pins_per_image[state.current_image_idx]):
-        pin_color = (0,255,0)
-        cv2.circle(disp, (int(round(px)), int(round(py))), ui['pin_radius'], pin_color, -1)
+    # Draw custom pins for the current image
+    for i, pin_data in enumerate(state.pins_per_image[state.current_image_idx]):
+        # Handle both 4-tuple and 5-tuple pin formats for backward compatibility
+        if len(pin_data) >= 2:  # At minimum we need x,y
+            px, py = pin_data[0], pin_data[1]
+            pin_color = (0,255,0)
+            cv2.circle(disp, (int(round(px)), int(round(py))), ui['pin_radius'], pin_color, -1)
     
     # Helper function to center text in button
     def draw_button_with_text(rect, text, is_active=False):

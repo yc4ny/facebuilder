@@ -22,7 +22,11 @@ def move_mesh_2d(state, old_lx, old_ly, dx, dy):
     elif state.drag_index != -1:  # Dragging a custom pin
         pin_idx = state.drag_index - len(state.landmark_positions)
         if pin_idx < len(state.pins_per_image[state.current_image_idx]):
-            _, _, face_idx, _ = state.pins_per_image[state.current_image_idx][pin_idx]
+            # Handle both 4-tuple and 5-tuple pin formats
+            pin_data = state.pins_per_image[state.current_image_idx][pin_idx]
+            # Extract face_idx which is always at index 2
+            face_idx = pin_data[2]
+            
             v_indices = state.faces[face_idx]
             avg_weight = np.mean(state.weights[v_indices, :], axis=0)
             norm_avg = avg_weight / np.sum(avg_weight)
