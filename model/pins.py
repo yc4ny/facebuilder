@@ -1,7 +1,7 @@
-
 # Copyright (c) CUBOX, Inc. and its affiliates.
 import numpy as np
 import cv2 
+from model.mesh import project_current_3d_to_2d
 
 def add_custom_pin(x, y, state):
     """Add a new custom pin at the given coordinates"""
@@ -34,8 +34,16 @@ def add_custom_pin(x, y, state):
                     bc_coords = np.array([a, b, c])
     
     if closest_face_idx != -1:
+        # Also store the 3D position of the pin using barycentric coordinates
+        i0, i1, i2 = state.faces[closest_face_idx]
+        v0_3d = state.verts3d[i0]
+        v1_3d = state.verts3d[i1]
+        v2_3d = state.verts3d[i2]
+        pin_pos_3d = bc_coords[0]*v0_3d + bc_coords[1]*v1_3d + bc_coords[2]*v2_3d
+        
         # Add pin data to the current image's pin list
-        state.pins_per_image[state.current_image_idx].append((x, y, closest_face_idx, bc_coords))
+        # Now store: (2D x, 2D y, face index, barycentric coordinates, 3D position)
+        state.pins_per_image[state.current_image_idx].append((x, y, closest_face_idx, bc_coords, pin_pos_3d))
         
         print(f"Added pin at ({x}, {y}) to face {closest_face_idx}")
         state.callbacks['redraw'](state)
@@ -45,13 +53,49 @@ def add_custom_pin(x, y, state):
 def update_custom_pins(state):
     """Update positions of custom pins after mesh movement"""
     updated_pins = []
-    for _, _, face_idx, bc in state.pins_per_image[state.current_image_idx]:
+    for _, _, face_idx, bc, pin_pos_3d in state.pins_per_image[state.current_image_idx]:
         i0, i1, i2 = state.faces[face_idx]
         v0, v1, v2 = state.verts2d[i0], state.verts2d[i1], state.verts2d[i2]
-        new_pos = bc[0]*v0 + bc[1]*v1 + bc[2]*v2
-        updated_pins.append((new_pos[0], new_pos[1], face_idx, bc))
+        new_pos_2d = bc[0]*v0 + bc[1]*v1 + bc[2]*v2
+        
+        # Update the 3D position based on the current 3D mesh
+        v0_3d, v1_3d, v2_3d = state.verts3d[i0], state.verts3d[i1], state.verts3d[i2]
+        new_pos_3d = bc[0]*v0_3d + bc[1]*v1_3d + bc[2]*v2_3d
+        
+        updated_pins.append((new_pos_2d[0], new_pos_2d[1], face_idx, bc, new_pos_3d))
     
     state.pins_per_image[state.current_image_idx] = updated_pins
+
+def synchronize_pins_across_views(state):
+    """
+    Ensure pins are consistent across all views by updating 2D positions
+    based on the shared 3D model
+    """
+    current_view = state.current_image_idx
+    
+    # For each view
+    for view_idx in range(len(state.images)):
+        if view_idx == current_view:
+            continue  # Skip current view as it's already up to date
+            
+        # Store the current view
+        temp_view = state.current_image_idx
+        
+        # Switch to the view we're updating
+        state.current_image_idx = view_idx
+        state.overlay = state.images[view_idx].copy()
+        state.img_h, state.img_w = state.overlay.shape[:2]
+        
+        # Project the current 3D model to this view
+        project_current_3d_to_2d(state)
+        
+        # Update pins for this view
+        update_custom_pins(state)
+        
+        # Switch back to original view
+        state.current_image_idx = temp_view
+        state.overlay = state.images[temp_view].copy()
+        state.img_h, state.img_w = state.overlay.shape[:2]
 
 def remove_pins(state):
     """Remove custom pins or landmark pins from the current image"""
@@ -72,7 +116,15 @@ def remove_pins(state):
 
 def center_geo(state):
     """Reset the mesh to its default position and clear any camera parameters"""
-    # Reset to default positions
+    # Reset to default positions while preserving mesh modifications
+    current_center_3d = np.mean(state.verts3d, axis=0)
+    default_center_3d = np.mean(state.verts3d_default, axis=0)
+    
+    # Translate the 3D mesh to the default center
+    translation = default_center_3d - current_center_3d
+    state.verts3d += translation
+    
+    # Update the 2D projection
     state.verts2d = state.verts2d_default.copy()
     state.landmark_positions = state.landmark_positions_default.copy()
     
@@ -82,97 +134,67 @@ def center_geo(state):
     state.rotations[state.current_image_idx] = None
     state.translations[state.current_image_idx] = None
     
-    state.callbacks['update_custom_pins'](state)
+    # Project the 3D model to 2D
+    project_current_3d_to_2d(state)
     
-    print("Reset mesh to default position")
+    # Update landmarks based on new 2D projection
+    from model.landmarks import update_all_landmarks
+    update_all_landmarks(state)
+    
+    # Update pins
+    update_custom_pins(state)
+    
+    print("Centered mesh position")
     state.callbacks['redraw'](state)
 
 def reset_shape(state):
     """Reset only the FLAME shape parameters while preserving position and orientation"""
     
     # Store the current transformation
-    current_center = np.mean(state.verts2d, axis=0)
-    current_scale = np.mean(np.linalg.norm(state.verts2d - current_center, axis=1))
+    current_center_3d = np.mean(state.verts3d, axis=0)
+    current_scale_3d = np.mean(np.linalg.norm(state.verts3d - current_center_3d, axis=1))
     
     # Reset to default shape
+    state.verts3d = state.verts3d_default.copy()
+    
+    # Apply the current scale and position to maintain orientation
+    default_center_3d = np.mean(state.verts3d, axis=0)
+    default_scale_3d = np.mean(np.linalg.norm(state.verts3d - default_center_3d, axis=1))
+    
+    # Scale factor to maintain current size
+    scale_factor = current_scale_3d / default_scale_3d
+    
+    # Apply scaling and translation
+    state.verts3d = (state.verts3d - default_center_3d) * scale_factor + current_center_3d
+    
+    # Project the updated 3D mesh to 2D
     if (state.camera_matrices[state.current_image_idx] is not None and 
         state.rotations[state.current_image_idx] is not None and 
         state.translations[state.current_image_idx] is not None):
         
-        camera_matrix = state.camera_matrices[state.current_image_idx]
-        rvec = state.rotations[state.current_image_idx]
-        tvec = state.translations[state.current_image_idx]
-        
-        # Try to use projectPoints if we have valid rotation and translation vectors
-        try:
-            # Project default 3D vertices to 2D using current camera parameters
-            projected_verts, _ = cv2.projectPoints(
-                np.array(state.verts3d_default, dtype=np.float32),
-                rvec, tvec, camera_matrix, np.zeros((4, 1))
-            )
-            new_verts = projected_verts.reshape(-1, 2)
-            
-            # Project default landmarks
-            projected_landmarks, _ = cv2.projectPoints(
-                np.array(state.landmark3d_default, dtype=np.float32),
-                rvec, tvec, camera_matrix, np.zeros((4, 1))
-            )
-            new_landmarks = projected_landmarks.reshape(-1, 2)
-            
-            print("Used 3D projection for reset")
-            
-        except cv2.error:
-            # Fall back to 2D transformation if projectPoints fails
-            print("3D projection failed, using 2D transformation instead")
-            new_verts = state.verts2d_default.copy()
-            new_landmarks = state.landmark_positions_default.copy()
-            
-            # Apply the current transformation (center and scale)
-            new_center = np.mean(new_verts, axis=0)
-            new_scale = np.mean(np.linalg.norm(new_verts - new_center, axis=1))
-            
-            # Scale to match current size
-            scale_factor = current_scale / new_scale
-            new_verts = (new_verts - new_center) * scale_factor + current_center
-            new_landmarks = (new_landmarks - new_center) * scale_factor + current_center
+        # If we have camera parameters, use them for projection
+        project_current_3d_to_2d(state)
     else:
-        # Use 2D transformation for MediaPipe-based alignment
-        print("Using 2D transformation for reset")
-        new_verts = state.verts2d_default.copy()
-        new_landmarks = state.landmark_positions_default.copy()
+        # Otherwise use orthographic projection
+        mn = state.verts3d[:, :2].min(axis=0)
+        mx = state.verts3d[:, :2].max(axis=0)
+        c3d = 0.5 * (mn + mx)
+        s3d = (mx - mn).max()
+        sc = 0.8 * min(state.img_w, state.img_h) / s3d
+        c2d = np.array([state.img_w/2.0, state.img_h/2.0])
         
-        # Apply the current transformation (center and scale)
-        new_center = np.mean(new_verts, axis=0)
-        new_scale = np.mean(np.linalg.norm(new_verts - new_center, axis=1))
-        
-        # If we have a transformation matrix from MediaPipe alignment
-        if state.camera_matrices[state.current_image_idx] is not None:
-            # Extract scale from the transformation matrix
-            transform_matrix = state.camera_matrices[state.current_image_idx]
-            if transform_matrix.shape[0] >= 2 and transform_matrix.shape[1] >= 2:
-                scale_factor = transform_matrix[0, 0]  # Scale is stored in the first diagonal element
-                translation = state.translations[state.current_image_idx]
-                
-                # Apply the transformation
-                new_verts = (new_verts - new_center) * scale_factor + current_center
-                new_landmarks = (new_landmarks - new_center) * scale_factor + current_center
-            else:
-                # Fall back to simple scaling if the matrix doesn't have the expected shape
-                scale_factor = current_scale / new_scale
-                new_verts = (new_verts - new_center) * scale_factor + current_center
-                new_landmarks = (new_landmarks - new_center) * scale_factor + current_center
-        else:
-            # Simple scaling if we don't have any camera parameters
-            scale_factor = current_scale / new_scale
-            new_verts = (new_verts - new_center) * scale_factor + current_center
-            new_landmarks = (new_landmarks - new_center) * scale_factor + current_center
+        from utils.geometry import ortho
+        state.verts2d = ortho(state.verts3d, c3d, c2d, sc)
     
-    # Update the vertices and landmarks
-    state.verts2d = new_verts
-    state.landmark_positions = new_landmarks
+    # Update landmarks
+    from model.landmarks import update_all_landmarks
+    update_all_landmarks(state)
     
-    # Update custom pins based on the reset mesh
-    state.callbacks['update_custom_pins'](state)
+    # Update custom pins
+    update_custom_pins(state)
+    
+    # Synchronize pins across all views
+    synchronize_pins_across_views(state)
     
     print("Reset mesh shape to default while preserving position and orientation")
     state.callbacks['redraw'](state)

@@ -1,12 +1,44 @@
 # Copyright (c) CUBOX, Inc. and its affiliates.
 import cv2
 import numpy as np
-import dlib  # Still needed for landmark prediction
+import dlib
 import mediapipe as mp
+from model.mesh import project_current_3d_to_2d
 
 def update_all_landmarks(state):
-    """Update all predefined landmarks"""
-    # Update all predefined landmarks
+    """
+    Update all predefined landmarks based on the current 3D mesh
+    """
+    # First update the 3D positions of landmarks
+    for i in range(len(state.landmark3d)):
+        f_idx = state.face_for_lmk[i]
+        bc = state.lmk_b_coords[i]
+        i0, i1, i2 = state.faces[f_idx]
+        v0, v1, v2 = state.verts3d[i0], state.verts3d[i1], state.verts3d[i2]
+        state.landmark3d[i] = bc[0]*v0 + bc[1]*v1 + bc[2]*v2
+    
+    # Then project to 2D for the current view
+    camera_matrix = state.camera_matrices[state.current_image_idx]
+    rvec = state.rotations[state.current_image_idx]
+    tvec = state.translations[state.current_image_idx]
+    
+    if camera_matrix is not None and rvec is not None and tvec is not None:
+        # Use perspective projection
+        try:
+            projected_landmarks, _ = cv2.projectPoints(
+                np.array(state.landmark3d, dtype=np.float32),
+                rvec, tvec, camera_matrix, np.zeros((4, 1))
+            )
+            state.landmark_positions = projected_landmarks.reshape(-1, 2)
+        except cv2.error:
+            # Fallback to direct calculation from 2D vertices
+            update_landmarks_from_2d(state)
+    else:
+        # Fallback to direct calculation from 2D vertices
+        update_landmarks_from_2d(state)
+
+def update_landmarks_from_2d(state):
+    """Update landmarks directly from 2D vertices (fallback method)"""
     for i in range(len(state.landmark_positions)):
         f_idx = state.face_for_lmk[i]
         bc = state.lmk_b_coords[i]
@@ -25,9 +57,6 @@ def align_face(state):
         ALIGNMENT_CACHE = {}
         print("Initialized global alignment cache")
     
-    # Store original vertices before alignment for reference (for shape preservation)
-    original_verts = state.verts2d.copy() if state.verts2d is not None else None
-    
     # Generate a unique key for this image
     cache_key = f"image_{state.current_image_idx}"
     
@@ -36,12 +65,16 @@ def align_face(state):
         print(f"Using cached alignment for image {state.current_image_idx+1}")
         cached_data = ALIGNMENT_CACHE[cache_key]
         
-        # Apply cached alignment exactly as stored
-        state.verts2d = cached_data['verts2d'].copy()
-        state.landmark_positions = cached_data['landmark_positions'].copy()
+        # Apply cached camera parameters
         state.camera_matrices[state.current_image_idx] = cached_data['camera_matrix']
         state.rotations[state.current_image_idx] = cached_data['rvec']
         state.translations[state.current_image_idx] = cached_data['tvec']
+        
+        # Project current 3D vertices to 2D using these parameters
+        project_current_3d_to_2d(state)
+        
+        # Update landmarks
+        update_all_landmarks(state)
         
         # Update custom pins
         state.callbacks['update_custom_pins'](state)
@@ -179,7 +212,8 @@ def align_face(state):
             )
             
             # Project all 3D vertices to 2D using the estimated pose
-            vertices_3d = np.array(state.verts3d_default, dtype=np.float32)
+            # Use the current (potentially modified) 3D vertices
+            vertices_3d = np.array(state.verts3d, dtype=np.float32)
             projected_vertices, _ = cv2.projectPoints(
                 vertices_3d, rvec, tvec, camera_matrix, dist_coeffs
             )
@@ -199,7 +233,7 @@ def align_face(state):
             y_inside = 0 <= verts_centroid[1] <= state.img_h
             
             if x_inside and y_inside:
-                # Update mesh with full 3D rotation
+                # Update 2D projection with full 3D rotation
                 state.verts2d = new_verts
                 state.landmark_positions = new_landmarks
                 
@@ -233,7 +267,7 @@ def align_face(state):
         model_scale = np.mean(np.linalg.norm(model_centered, axis=1)) if len(model_centered) > 0 else 1.0
         scale_factor = detected_scale / model_scale if model_scale > 0 else 1.0
         
-        # Apply transformation to vertices and landmarks
+        # Apply transformation to vertices and landmarks in 2D
         translation = detected_center - model_center * scale_factor
         state.verts2d = (state.verts2d_default - model_center) * scale_factor + detected_center
         state.landmark_positions = (state.landmark_positions_default - model_center) * scale_factor + detected_center
@@ -251,8 +285,6 @@ def align_face(state):
     
     # Cache the alignment results in the global cache
     ALIGNMENT_CACHE[cache_key] = {
-        'verts2d': state.verts2d.copy(),
-        'landmark_positions': state.landmark_positions.copy(),
         'camera_matrix': state.camera_matrices[state.current_image_idx],
         'rvec': state.rotations[state.current_image_idx],
         'tvec': state.translations[state.current_image_idx]

@@ -8,11 +8,11 @@ import mediapipe as mp
 
 from config import WINDOW_NAME, Mode
 from utils.file_io import load_images_from_directory, save_model, save_to_obj
-from utils.geometry import ortho, remove_eyeballs
+from utils.geometry import ortho, remove_eyeballs, project_3d_to_2d
 from ui.dimensions import calculate_ui_dimensions
 from ui.rendering import redraw
 from ui.input import on_mouse
-from model.mesh import move_mesh_2d
+from model.mesh import move_mesh_2d, update_3d_vertices, project_current_3d_to_2d
 from model.landmarks import update_all_landmarks, align_face
 from model.pins import add_custom_pin, update_custom_pins, remove_pins, center_geo, reset_shape
 
@@ -27,8 +27,10 @@ class FaceBuilderState:
         self.custom_pin_colors = []  # Color for each custom pin
         
         # Face model variables
-        self.landmark_positions = None
-        self.verts2d = None
+        self.landmark_positions = None  # 2D landmark positions for current view
+        self.landmark3d = None  # 3D landmark positions (shared across all views)
+        self.verts2d = None  # 2D projection of vertices for current view
+        self.verts3d = None  # 3D vertices (shared across all views)
         self.faces = None
         self.face_for_lmk = None
         self.lmk_b_coords = None
@@ -38,7 +40,7 @@ class FaceBuilderState:
         self.alpha = 1e-4
         self.weights = None
         
-        # Default pose variables
+        # Default pose variables - never modified, used for resetting
         self.verts2d_default = None
         self.landmark_positions_default = None
         self.verts3d_default = None
@@ -55,7 +57,17 @@ class FaceBuilderState:
         # Initialize face detector and predictor
         # We keep dlib for landmark detection and as a fallback detector
         self.dlib_detector = dlib.get_frontal_face_detector()
-        self.dlib_predictor = dlib.shape_predictor("data/shape_predictor_68_face_landmarks.dat")
+        
+        # Try to load the shape predictor
+        try:
+            self.dlib_predictor = dlib.shape_predictor("data/shape_predictor_68_face_landmarks.dat")
+            print("Loaded dlib shape predictor")
+        except RuntimeError as e:
+            print(f"Error loading dlib shape predictor: {e}")
+            print("Please download the shape predictor from:")
+            print("http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2")
+            print("Extract it to the data directory and restart the application.")
+            exit(1)
         
         # Initialize MediaPipe for better face detection
         try:
@@ -86,7 +98,9 @@ class FaceBuilderState:
             'remove_pins': remove_pins,
             'center_geo': center_geo,
             'reset_shape': reset_shape,
-            'update_custom_pins': update_custom_pins
+            'update_custom_pins': update_custom_pins,
+            'update_3d_vertices': update_3d_vertices,
+            'project_2d': project_current_3d_to_2d
         }
     
     def update_ui(self, state=None):
@@ -100,6 +114,14 @@ class FaceBuilderState:
             self.current_image_idx += 1
             self.overlay = self.images[self.current_image_idx].copy()
             self.img_h, self.img_w = self.overlay.shape[:2]
+            
+            # Project the current 3D model to 2D for this view
+            self.callbacks['project_2d'](self)
+            
+            # Update landmarks for the new view
+            update_all_landmarks(self)
+            
+            # Update UI dimensions for the new image size
             self.update_ui()
     
     def prev_image(self, state=None):
@@ -108,13 +130,21 @@ class FaceBuilderState:
             self.current_image_idx -= 1
             self.overlay = self.images[self.current_image_idx].copy()
             self.img_h, self.img_w = self.overlay.shape[:2]
+            
+            # Project the current 3D model to 2D for this view
+            self.callbacks['project_2d'](self)
+            
+            # Update landmarks for the new view
+            update_all_landmarks(self)
+            
+            # Update UI dimensions for the new image size
             self.update_ui()
     
     def save_model(self, state=None):
         """Save the current 3D model to file"""
         save_model(
             self.verts2d, 
-            self.verts3d_default, 
+            self.verts3d,  # Now using the modified 3D vertices
             self.faces, 
             self.pins_per_image, 
             self.camera_matrices, 
@@ -207,6 +237,9 @@ def main():
     
     state.verts2d = ortho(verts_3d, c3d, c2d, sc)
     
+    # Initialize the 3D vertices that will be modified by user interactions
+    state.verts3d = verts_3d.copy()
+    
     # Calculate 3D landmark positions and their 2D projections
     lmk_3d = []
     for face_idx, bc in zip(state.face_for_lmk, state.lmk_b_coords):
@@ -217,11 +250,14 @@ def main():
         xyz = bc[0]*v0 + bc[1]*v1 + bc[2]*v2
         lmk_3d.append(xyz)
     
+    # Initialize 3D landmarks
+    state.landmark3d = np.array(lmk_3d)
+    
     # Project landmarks to 2D
     lmk_2d = ortho(np.array(lmk_3d), c3d, c2d, sc)
     state.landmark_positions = lmk_2d
     
-    # Store default positions
+    # Store default positions - these are never modified, used for resetting
     state.verts2d_default = state.verts2d.copy()
     state.landmark_positions_default = state.landmark_positions.copy()
     state.verts3d_default = verts_3d.copy()
@@ -244,6 +280,7 @@ def main():
     print("- Click 'Save' to save the current model to file")
     print("- Drag landmarks or custom pins to manipulate the 3D mesh")
     print("- Press ESC to exit\n")
+    print("NEW FEATURE: 3D deformations are now preserved across all views!")
     
     redraw(state)
     
