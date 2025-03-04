@@ -116,6 +116,12 @@ def remove_pins(state):
         # We'll use a simple flag since we can't really delete the landmarks
         # (they're needed for the underlying mesh structure)
         state.landmark_pins_hidden = True
+        
+        # Clear alignment cache for this image to force re-alignment next time
+        # This ensures landmarks will be made visible again
+        from model.landmarks import clear_image_alignment
+        clear_image_alignment(state)
+        
         print("Landmark pins removed")
     
     # Redraw to update the display
@@ -126,28 +132,54 @@ def center_geo(state):
     # Reset 3D vertices to default (original model)
     state.verts3d = state.verts3d_default.copy()
     
-    # Reset 3D landmarks to default
-    state.landmark3d = state.landmark3d_default.copy()
+    # Calculate initial 2D projection using orthographic projection
+    mn = state.verts3d[:, :2].min(axis=0)
+    mx = state.verts3d[:, :2].max(axis=0)
+    c3d = 0.5 * (mn + mx)
+    s3d = (mx - mn).max()
+    sc = 0.8 * min(state.img_w, state.img_h) / s3d
+    c2d = np.array([state.img_w/2.0, state.img_h/2.0])
     
-    # Project to 2D for the current view
-    # Start with default 2D positions
-    state.verts2d = state.verts2d_default.copy()
-    state.landmark_positions = state.landmark_positions_default.copy()
+    # Use orthographic projection for 2D vertices
+    from utils.geometry import ortho
+    state.verts2d = ortho(state.verts3d, c3d, c2d, sc)
     
     # Clear camera parameters for the current image
-    # ensure no alignment parameters remain
     state.camera_matrices[state.current_image_idx] = None
     state.rotations[state.current_image_idx] = None
     state.translations[state.current_image_idx] = None
+    
+    # Update landmarks based on reset mesh
+    # First update the 3D positions of landmarks
+    for i in range(len(state.landmark3d_default)):
+        f_idx = state.face_for_lmk[i]
+        bc = state.lmk_b_coords[i]
+        i0, i1, i2 = state.faces[f_idx]
+        v0, v1, v2 = state.verts3d[i0], state.verts3d[i1], state.verts3d[i2]
+        if i < len(state.landmark3d):
+            state.landmark3d[i] = bc[0]*v0 + bc[1]*v1 + bc[2]*v2
+    
+    # Project landmarks to 2D
+    landmark2d = []
+    for i in range(len(state.landmark3d)):
+        f_idx = state.face_for_lmk[i]
+        bc = state.lmk_b_coords[i]
+        i0, i1, i2 = state.faces[f_idx]
+        v0, v1, v2 = state.verts2d[i0], state.verts2d[i1], state.verts2d[i2]
+        landmark2d.append(bc[0]*v0 + bc[1]*v1 + bc[2]*v2)
+    
+    state.landmark_positions = np.array(landmark2d)
+    
+    # Make landmarks visible again if they were hidden
+    if hasattr(state, 'landmark_pins_hidden'):
+        state.landmark_pins_hidden = False
+        print("Landmarks made visible again")
     
     # Update custom pins
     update_custom_pins(state)
     
     print("Reset mesh to default position")
     state.callbacks['redraw'](state)
-
-# Copyright (c) CUBOX, Inc. and its affiliates.
-# Only the reset_shape function - replace this in pins.py
 
 def reset_shape(state):
     """Reset only the shape parameters while preserving position and orientation"""
@@ -159,48 +191,65 @@ def reset_shape(state):
     # Reset to default shape in 3D space
     state.verts3d = state.verts3d_default.copy()
     
+    # Apply the current scale and position to maintain orientation
+    default_center_3d = np.mean(state.verts3d, axis=0)
+    default_scale_3d = np.mean(np.linalg.norm(state.verts3d - default_center_3d, axis=1))
+    
+    # Scale factor to maintain current size
+    scale_factor = current_scale_3d / default_scale_3d if default_scale_3d > 0 else 1.0
+    
+    # Apply scaling and translation
+    state.verts3d = (state.verts3d - default_center_3d) * scale_factor + current_center_3d
+    
     # Check if we have camera parameters for this view
     if (state.camera_matrices[state.current_image_idx] is not None and 
         state.rotations[state.current_image_idx] is not None and 
         state.translations[state.current_image_idx] is not None):
         
-        # Project default 3D mesh to 2D using current camera parameters
+        # Project 3D mesh to 2D using current camera parameters
         project_current_3d_to_2d(state)
-        
-        # Update landmarks explicitly based on the new mesh
-        from model.landmarks import update_all_landmarks
-        update_all_landmarks(state)
-        
-        # Update custom pins
-        update_custom_pins(state)
-        
-        print("Reset mesh shape to default while preserving position and orientation")
     else:
-        # No camera parameters, use 2D transformation
-        # Set 2D vertices to default positions
-        state.verts2d = state.verts2d_default.copy()
+        # No camera parameters, use orthographic projection
+        mn = state.verts3d[:, :2].min(axis=0)
+        mx = state.verts3d[:, :2].max(axis=0)
+        c3d = 0.5 * (mn + mx)
+        s3d = (mx - mn).max()
+        sc = 0.8 * min(state.img_w, state.img_h) / s3d
+        c2d = np.array([state.img_w/2.0, state.img_h/2.0])
         
-        # Apply the stored 2D transformation
-        new_center = np.mean(state.verts2d, axis=0)
-        new_scale = np.mean(np.linalg.norm(state.verts2d - new_center, axis=1))
-        
-        # Scale and translate to match the previous transformation
-        scale_factor = current_scale_3d / new_scale
-        state.verts2d = (state.verts2d - new_center) * scale_factor + current_center_3d[:2]
-        
-        # Update the 3D vertices to match the 2D transformation
-        update_3d_vertices(state)
-        
-        # Update landmarks explicitly based on the new mesh
-        from model.landmarks import update_all_landmarks
-        update_all_landmarks(state)
-        
-        # Update custom pins
-        update_custom_pins(state)
-        
-        print("Reset mesh shape to default using 2D transformation")
+        from utils.geometry import ortho
+        state.verts2d = ortho(state.verts3d, c3d, c2d, sc)
+    
+    # Update landmarks based on reset mesh
+    # First update the 3D positions of landmarks
+    for i in range(len(state.landmark3d)):
+        f_idx = state.face_for_lmk[i]
+        bc = state.lmk_b_coords[i]
+        i0, i1, i2 = state.faces[f_idx]
+        v0, v1, v2 = state.verts3d[i0], state.verts3d[i1], state.verts3d[i2]
+        state.landmark3d[i] = bc[0]*v0 + bc[1]*v1 + bc[2]*v2
+    
+    # Project landmarks to 2D
+    landmark2d = []
+    for i in range(len(state.landmark3d)):
+        f_idx = state.face_for_lmk[i]
+        bc = state.lmk_b_coords[i]
+        i0, i1, i2 = state.faces[f_idx]
+        v0, v1, v2 = state.verts2d[i0], state.verts2d[i1], state.verts2d[i2]
+        landmark2d.append(bc[0]*v0 + bc[1]*v1 + bc[2]*v2)
+    
+    state.landmark_positions = np.array(landmark2d)
+    
+    # Make landmarks visible again if they were hidden
+    if hasattr(state, 'landmark_pins_hidden'):
+        state.landmark_pins_hidden = False
+        print("Landmarks made visible again")
+    
+    # Update custom pins
+    update_custom_pins(state)
     
     # Synchronize pins across all views to maintain consistency
     synchronize_pins_across_views(state)
     
+    print("Reset mesh shape to default while preserving position and orientation")
     state.callbacks['redraw'](state)

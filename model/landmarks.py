@@ -76,6 +76,11 @@ def align_face(state):
         # Update landmarks
         update_all_landmarks(state)
         
+        # Make landmarks visible again if they were hidden
+        if hasattr(state, 'landmark_pins_hidden'):
+            state.landmark_pins_hidden = False
+            print("Landmarks made visible again after using cached alignment")
+        
         # Update custom pins
         state.callbacks['update_custom_pins'](state)
         state.callbacks['redraw'](state)
@@ -289,6 +294,11 @@ def align_face(state):
         'rvec': state.rotations[state.current_image_idx],
         'tvec': state.translations[state.current_image_idx]
     }
+    
+    # Make landmarks visible again if they were hidden
+    if hasattr(state, 'landmark_pins_hidden'):
+        state.landmark_pins_hidden = False
+        print("Landmarks made visible again")
     
     # Update custom pins
     state.callbacks['update_custom_pins'](state)
