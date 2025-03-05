@@ -1,6 +1,6 @@
 <p align="center">
 
-  <h1 align="center">X-Ray Hazardous Object Detector</h1>
+  <h1 align="center">Facebuilder</h1>
   <p align="center">
     <a href="https://www.cubox.ai/"><strong>CUBOX AI Lab</strong></a><sup></sup>
   <div align="center">
@@ -18,7 +18,7 @@
 
 <br/>
 
-**Facebuilder**
+**Facebuilder** is a robust object detection system designed to detect hazardous items in X-ray images. The system leverages state-of-the-art <a href="https://docs.ultralytics.com/"><strong>YOLO Object Detection</strong></a><sup></sup> (You Only Look Once) architecture for real-time object detection. It is capable of identifying various dangerous objects in X-ray scans, assisting in security checks and ensuring safety in environments such as airports, checkpoints, and border security. The model is trained on a custom dataset of X-ray images and provides both bounding boxes and object classifications.
 <br/>
 
 ## News :triangular_flag_on_post:
