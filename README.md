@@ -1,6 +1,6 @@
 <p align="center">
 
-  <h1 align="center">Keentools' Facebuilder in Python</h1>
+  <h1 align="center">Facebuilder Tool</h1>
   <p align="center">
     <a href="https://www.cubox.ai/"><strong>CUBOX AI Lab</strong></a><sup></sup>
   <div align="center">
