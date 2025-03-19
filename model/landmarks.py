@@ -3,11 +3,16 @@ import cv2
 import numpy as np
 import dlib
 import mediapipe as mp
-from model.mesh import project_current_3d_to_2d
+
+# Remove the import of project_current_3d_to_2d from model.mesh
 
 def update_all_landmarks(state):
     """
     Update all predefined landmarks based on the current 3D mesh
+    
+    Note: With the constraint-based deformation system, landmarks should maintain
+    their positions during dragging operations, but this function is still needed
+    to update landmarks after projection or other global transformations.
     """
     # First update the 3D positions of landmarks
     for i in range(len(state.landmark3d)):
@@ -71,7 +76,8 @@ def align_face(state):
         state.translations[state.current_image_idx] = cached_data['tvec']
         
         # Project current 3D vertices to 2D using these parameters
-        project_current_3d_to_2d(state)
+        # Use callback instead of direct import to avoid circular dependency
+        state.callbacks['project_2d'](state)
         
         # Update landmarks
         update_all_landmarks(state)

@@ -75,7 +75,18 @@ def redraw(state):
     elif state.mode == Mode.TOGGLE_PINS:
         mode_text = "Mode: TOGGLE PINS"
     else:
-        mode_text = "Mode: MOVE"
+        # Count active pins to determine if we're in single pin mode or regular move mode
+        custom_pin_count = len(state.pins_per_image[state.current_image_idx])
+        landmark_pins_hidden = hasattr(state, 'landmark_pins_hidden') and state.landmark_pins_hidden
+        
+        total_active_pins = custom_pin_count
+        if not landmark_pins_hidden:
+            total_active_pins += len(state.landmark_positions)
+        
+        if total_active_pins == 1:
+            mode_text = "Mode: SINGLE PIN (MOVE+ROTATE)"
+        else:
+            mode_text = "Mode: MULTI-PIN DEFORM"
     
     cv2.putText(disp, mode_text, (status_x, status_y2), 
                 cv2.FONT_HERSHEY_SIMPLEX, ui['text_size']*2, (255,120,0), ui['text_thickness']*2)

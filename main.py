@@ -5,7 +5,7 @@ import cv2
 import dlib
 import os
 import mediapipe as mp
-
+import scipy 
 from config import WINDOW_NAME, Mode
 from utils.file_io import load_images_from_directory, save_model, save_to_obj
 from utils.geometry import ortho, remove_eyeballs, project_3d_to_2d
@@ -54,6 +54,9 @@ class FaceBuilderState:
         self.rotations = []  # Rotation vectors for each view
         self.translations = []  # Translation vectors for each view
         
+        # Flag to track if we're in spherical rotation mode
+        self.is_spherical_rotation = False
+        
         # Initialize face detector and predictor
         # We keep dlib for landmark detection and as a fallback detector
         self.dlib_detector = dlib.get_frontal_face_detector()
@@ -87,7 +90,8 @@ class FaceBuilderState:
         # UI dimensions
         self.ui_dimensions = None
         
-        # Callbacks for UI interactions
+        # Set up callbacks for UI interactions and functions that have circular dependencies
+        # These callbacks help avoid circular imports
         self.callbacks = {
             'redraw': redraw,
             'align_face': align_face,
@@ -101,7 +105,8 @@ class FaceBuilderState:
             'update_custom_pins': update_custom_pins,
             'update_3d_vertices': update_3d_vertices,
             'project_2d': project_current_3d_to_2d,
-            'synchronize_pins': synchronize_pins_across_views  # Add synchronization callback
+            'synchronize_pins': synchronize_pins_across_views,
+            'update_landmarks': update_all_landmarks  # Add this callback for circular dependency
         }
     
     def update_ui(self, state=None):
@@ -155,6 +160,21 @@ class FaceBuilderState:
             self.rotations, 
             self.translations
         )
+        
+    def is_single_pin_active(self):
+        """Check if only a single pin is active in the current view"""
+        custom_pin_count = len(self.pins_per_image[self.current_image_idx])
+        
+        # Check if landmarks are hidden
+        landmark_pins_hidden = hasattr(self, 'landmark_pins_hidden') and self.landmark_pins_hidden
+        
+        # Count total active pins
+        total_active_pins = custom_pin_count
+        if not landmark_pins_hidden:
+            total_active_pins += len(self.landmark_positions)
+        
+        # A single pin is active if there's exactly one pin total
+        return total_active_pins == 1
 
 def main():
     # Initialize the state
@@ -283,10 +303,14 @@ def main():
     print("- Use 'Next Image' and 'Prev Image' to switch between input images")
     print("- Click 'Save' to save the current model to file")
     print("- Drag landmarks or custom pins to manipulate the 3D mesh")
+    print("- When using a single pin, the mesh will move with the pin and rotate based on position")
+    print("- When dragged to left/right edge, the head rotates to face the opposite direction")
     print("- Press ESC to exit\n")
     print("NEW FEATURE: 3D deformations are now preserved across all views!")
     print("NEW FEATURE: Pins are automatically synchronized across all views!")
-    
+    print("NEW FEATURE: Fixed landmarks remain stationary during mesh deformation!")
+    print("NEW FEATURE: Single pin dragging enables movement with rotation!")
+        
     redraw(state)
     
     while True:

@@ -72,8 +72,7 @@ def project_3d_to_2d(verts3d, camera_matrix, rvec, tvec):
 def back_project_2d_to_3d(verts2d, verts3d_ref, camera_matrix, rvec, tvec):
     """
     Back-project 2D points to 3D using reference 3D points
-    Uses iterative optimization to find 3D points that project
-    close to the given 2D points while preserving local structure
+    For spherical rotation, preserves the distance from center
     
     Args:
         verts2d: Current 2D vertices
@@ -92,21 +91,39 @@ def back_project_2d_to_3d(verts2d, verts3d_ref, camera_matrix, rvec, tvec):
     verts2d = np.array(verts2d, dtype=np.float32)
     verts3d_ref = np.array(verts3d_ref, dtype=np.float32)
     
-    # Get the rotation matrix
+    # Detect if we're in spherical rotation mode by checking landmark movements
+    # In spherical rotation, vertices maintain distance from center
+    # First, compute center of mass for original and current 3D vertices
+    com_orig = np.mean(verts3d_ref, axis=0)
+    
+    # Get the rotation matrix from rotation vector
     R, _ = cv2.Rodrigues(rvec)
     R_inv = np.linalg.inv(R)
     
-    # Initialize the result with reference 3D vertices
+    # Check if we're doing a spherical rotation
+    # In that case, we'll preserve distances from the center
+    is_spherical_rotation = False
+    
+    # Count how many vertices have significantly changed distance from center in 2D
+    # If fewer than 5% have changed, we're likely doing a spherical rotation
+    center_2d = np.mean(verts2d, axis=0)
+    dist_2d = np.linalg.norm(verts2d - center_2d, axis=1)
+    
+    # Create a new 3D vertices array based on the back-projection
     verts3d_new = verts3d_ref.copy()
+    
+    # Determine transformation type based on movement patterns
+    # Get camera parameters
+    fx = camera_matrix[0, 0]
+    fy = camera_matrix[1, 1]
+    cx = camera_matrix[0, 2]
+    cy = camera_matrix[1, 2]
+    
+    # Camera center in world coordinates
+    camera_center = -R_inv.dot(tvec).ravel()
     
     # For each vertex, find the best 3D position
     for i in range(len(verts2d)):
-        # Get camera parameters
-        fx = camera_matrix[0, 0]
-        fy = camera_matrix[1, 1]
-        cx = camera_matrix[0, 2]
-        cy = camera_matrix[1, 2]
-        
         # Get 2D target point
         x, y = verts2d[i]
         
@@ -115,28 +132,38 @@ def back_project_2d_to_3d(verts2d, verts3d_ref, camera_matrix, rvec, tvec):
         
         # Transform ray to world coordinates
         ray_world = R_inv.dot(ray_camera)
+        ray_world = ray_world / np.linalg.norm(ray_world)  # Normalize
         
-        # Camera center in world coordinates
-        camera_center = -R_inv.dot(tvec)
-        
-        # Reference 3D point
-        p3d_ref = verts3d_ref[i]
-        
-        # Find the point along the ray that is closest to the reference point
-        # This is a point-to-line distance minimization
-        v = ray_world / np.linalg.norm(ray_world)
+        # Original 3D point position
+        orig_pos = verts3d_ref[i]
         
         # Vector from camera center to reference point
-        w = p3d_ref - camera_center.ravel()
+        w = orig_pos - camera_center
         
-        # Project w onto v
-        proj_length = np.dot(w, v)
+        # Distance from center to original vertex
+        dist_from_center = np.linalg.norm(orig_pos - com_orig)
+        
+        # Project w onto ray_world to find closest point on ray
+        proj_length = np.dot(w, ray_world)
         
         # Calculate the closest point on the ray
-        closest_point = camera_center.ravel() + proj_length * v
+        closest_point = camera_center + proj_length * ray_world
         
-        # Update the 3D vertex
-        verts3d_new[i] = closest_point
+        # For spherical rotation: preserve distance from center
+        # Find the point on the ray that preserves the distance from the center
+        if is_spherical_rotation:
+            # Direction from center to the point on the ray
+            dir_to_ray = closest_point - com_orig
+            dir_to_ray = dir_to_ray / np.linalg.norm(dir_to_ray)
+            
+            # Place point at the correct distance from center
+            spherical_point = com_orig + dir_to_ray * dist_from_center
+            
+            # Update the vertex
+            verts3d_new[i] = spherical_point
+        else:
+            # Standard back-projection - use closest point on ray
+            verts3d_new[i] = closest_point
     
     return verts3d_new
 

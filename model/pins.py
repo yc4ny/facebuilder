@@ -3,6 +3,7 @@ import numpy as np
 import cv2 
 from model.mesh import project_current_3d_to_2d, update_3d_vertices
 
+
 def add_custom_pin(x, y, state):
     """Add a new custom pin at the given coordinates"""
     # Find the closest face to the pin position
@@ -51,22 +52,44 @@ def add_custom_pin(x, y, state):
 
 def update_custom_pins(state):
     """Update positions of custom pins after mesh movement"""
+    # Get current camera parameters
+    camera_matrix = state.camera_matrices[state.current_image_idx]
+    rvec = state.rotations[state.current_image_idx]
+    tvec = state.translations[state.current_image_idx]
+    
     updated_pins = []
     for pin_data in state.pins_per_image[state.current_image_idx]:
         # Support both 4-tuple and 5-tuple pin formats for backward compatibility
         face_idx = pin_data[2]
         bc = pin_data[3]
         
+        # Get 3D coordinates of the triangle vertices
         i0, i1, i2 = state.faces[face_idx]
-        v0, v1, v2 = state.verts2d[i0], state.verts2d[i1], state.verts2d[i2]
-        new_pos_2d = bc[0]*v0 + bc[1]*v1 + bc[2]*v2
-        
-        # Update the 3D position based on the current 3D mesh
         v0_3d, v1_3d, v2_3d = state.verts3d[i0], state.verts3d[i1], state.verts3d[i2]
-        new_pos_3d = bc[0]*v0_3d + bc[1]*v1_3d + bc[2]*v2_3d
+        
+        # Calculate 3D position using barycentric coordinates
+        pin_pos_3d = bc[0]*v0_3d + bc[1]*v1_3d + bc[2]*v2_3d
+        
+        # Project 3D position to 2D based on current view parameters
+        if camera_matrix is not None and rvec is not None and tvec is not None:
+            # Use perspective projection if we have camera parameters
+            try:
+                projected_pin, _ = cv2.projectPoints(
+                    np.array([pin_pos_3d], dtype=np.float32),
+                    rvec, tvec, camera_matrix, np.zeros((4, 1))
+                )
+                new_pos_2d = projected_pin.reshape(-1, 2)[0]
+            except cv2.error:
+                # Fallback to using triangle vertices in 2D
+                v0, v1, v2 = state.verts2d[i0], state.verts2d[i1], state.verts2d[i2]
+                new_pos_2d = bc[0]*v0 + bc[1]*v1 + bc[2]*v2
+        else:
+            # Use triangle vertices in 2D if no camera parameters
+            v0, v1, v2 = state.verts2d[i0], state.verts2d[i1], state.verts2d[i2]
+            new_pos_2d = bc[0]*v0 + bc[1]*v1 + bc[2]*v2
         
         # Always use 5-tuple format for new pins
-        updated_pins.append((new_pos_2d[0], new_pos_2d[1], face_idx, bc, new_pos_3d))
+        updated_pins.append((new_pos_2d[0], new_pos_2d[1], face_idx, bc, pin_pos_3d))
     
     state.pins_per_image[state.current_image_idx] = updated_pins
 

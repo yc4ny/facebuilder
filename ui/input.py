@@ -134,7 +134,6 @@ def on_mouse(event, x, y, flags, _, state):
                     
                     nx = x + state.drag_offset[0]
                     ny = y + state.drag_offset[1]
-                    dx, dy = nx - ox, ny - oy
                     
                     if state.mode == Mode.TOGGLE_PINS:
                         # In toggle pins mode, just move the pin without affecting the mesh
@@ -145,13 +144,20 @@ def on_mouse(event, x, y, flags, _, state):
                             # 4-tuple format
                             state.pins_per_image[state.current_image_idx][pin_idx] = (nx, ny, face_idx, bc)
                     else:
-                        # In regular mode, move the mesh with the pin
-                        # This will update both 2D and 3D vertices
-                        move_mesh_2d(state, ox, oy, dx, dy)
-                        
-                        # Update landmarks and all pins
-                        update_all_landmarks(state)
-                        update_custom_pins(state)
+                        # Check if we have multiple pins for rigid transformation
+                        pins = state.pins_per_image[state.current_image_idx]
+                        if len(pins) >= 2:
+                            # Use rigid transformation for multiple pins
+                            from model.mesh import transform_mesh_rigid
+                            transform_mesh_rigid(state, pin_idx, ox, oy, nx, ny)
+                        else:
+                            # Use regular deformation for a single pin
+                            dx, dy = nx - ox, ny - oy
+                            move_mesh_2d(state, ox, oy, dx, dy)
+                            
+                            # Update landmarks and all pins
+                            update_all_landmarks(state)
+                            update_custom_pins(state)
             
             state.callbacks['redraw'](state)
 
