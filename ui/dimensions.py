@@ -27,7 +27,6 @@ def calculate_ui_dimensions(img_w, img_h):
     remove_pins_button_width = button_width
     toggle_pins_button_width = button_width
     save_button_width = button_width
-    add_pin_button_width = button_width
     next_img_button_width = button_width
     prev_img_button_width = button_width
     
@@ -45,9 +44,6 @@ def calculate_ui_dimensions(img_w, img_h):
     # Reset Shape button (3rd)
     reset_shape_button_rect = (current_x, button_margin, reset_shape_button_width, button_height)
     current_x += reset_shape_button_width + button_margin
-
-    add_pin_button_rect = (current_x, button_margin, add_pin_button_width, button_height)
-    current_x += add_pin_button_width + button_margin
     
     # Remove Pins button (4th)
     remove_pins_button_rect = (current_x, button_margin, remove_pins_button_width, button_height)
@@ -78,7 +74,6 @@ def calculate_ui_dimensions(img_w, img_h):
         'align_button_rect': align_button_rect,
         'reset_shape_button_rect': reset_shape_button_rect,
         'remove_pins_button_rect': remove_pins_button_rect,
-        'add_pin_button_rect': add_pin_button_rect,
         'toggle_pins_button_rect': toggle_pins_button_rect,
         'save_button_rect': save_button_rect,
         'next_img_button_rect': next_img_button_rect,

@@ -293,10 +293,10 @@ def main():
     # Create window and set mouse callback
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.setMouseCallback(WINDOW_NAME, lambda event, x, y, flags, _: on_mouse(event, x, y, flags, _, state))
-    
+
     print("\nEnhanced Face Builder Controls:")
     print("- Click 'Align Face' to automatically detect and align the 3D mesh to the face")
-    print("- Click 'Add Pin' to toggle between adding custom pins and moving points")
+    print("- Click directly on the mesh to add pins automatically")
     print("- Click 'Toggle Pins' to move pins without affecting the mesh")
     print("- Click 'Remove Pins' to clear all custom pins from the current image")
     print("- Click 'Center Geo' to reset the mesh to its default position")
@@ -306,11 +306,6 @@ def main():
     print("- When using a single pin, the mesh will move with the pin and rotate based on position")
     print("- When dragged to left/right edge, the head rotates to face the opposite direction")
     print("- Press ESC to exit\n")
-    print("NEW FEATURE: 3D deformations are now preserved across all views!")
-    print("NEW FEATURE: Pins are automatically synchronized across all views!")
-    print("NEW FEATURE: Fixed landmarks remain stationary during mesh deformation!")
-    print("NEW FEATURE: Single pin dragging enables movement with rotation!")
-        
     redraw(state)
     
     while True:

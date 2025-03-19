@@ -1,6 +1,7 @@
 # Copyright (c) CUBOX, Inc. and its affiliates.
 import cv2
-from config import Mode
+import numpy as np
+from config import Mode, PIN_SELECTION_THRESHOLD
 from model.pins import add_custom_pin, update_custom_pins, synchronize_pins_across_views
 from model.mesh import move_mesh_2d
 from model.landmarks import update_all_landmarks
@@ -30,13 +31,6 @@ def on_mouse(event, x, y, flags, _, state):
             state.callbacks['reset_shape'](state)
             return
         
-        # Add Pin button 
-        bx, by, bw, bh = ui['add_pin_button_rect']
-        if bx <= x <= bx + bw and by <= y <= by + bh:
-            state.mode = Mode.ADD_PIN if state.mode != Mode.ADD_PIN else Mode.MOVE
-            state.callbacks['update_ui'](state)
-            return
-            
         # Remove Pins button 
         bx, by, bw, bh = ui['remove_pins_button_rect']
         if bx <= x <= bx + bw and by <= y <= by + bh:
@@ -67,19 +61,57 @@ def on_mouse(event, x, y, flags, _, state):
         if bx <= x <= bx + bw and by <= y <= by + bh:
             state.callbacks['prev_image'](state)
             return
-            
-        # Handle pin adding in ADD_PIN mode
-        if state.mode == Mode.ADD_PIN:
-            add_custom_pin(x, y, state)
-            return
         
-        # Handle landmark or pin dragging in MOVE mode
-        if state.mode == Mode.MOVE or state.mode == Mode.TOGGLE_PINS:
-            # Calculate adaptive search radius based on image size
+        # In MOVE mode, first check if the click is near an existing pin or landmark
+        if state.mode == Mode.MOVE:
+            # Calculate adaptive search radius based on image size and the PIN_SELECTION_THRESHOLD
+            pin_selection_threshold_sq = PIN_SELECTION_THRESHOLD ** 2
             pin_radius_sq = (ui['pin_radius'] * 1.5) ** 2  # Slightly larger than visible radius
             landmark_radius_sq = (ui['landmark_radius'] * 1.5) ** 2
             
+            # Initialize flag to track if we found a pin/landmark
+            found_pin_or_landmark = False
+            
             # Check if click is on a custom pin first
+            for i, pin_data in enumerate(state.pins_per_image[state.current_image_idx]):
+                # Handle both 4-tuple and 5-tuple pin formats for backward compatibility
+                if len(pin_data) >= 2:  # At minimum we need x,y
+                    px, py = pin_data[0], pin_data[1]
+                    dx, dy = px - x, py - y
+                    dist_sq = dx*dx + dy*dy
+                    
+                    # Check if click is within the pin selection threshold
+                    if dist_sq < pin_selection_threshold_sq:
+                        state.drag_index = i + len(state.landmark_positions)  # Offset by landmark count
+                        state.drag_offset = (px - x, py - y)
+                        found_pin_or_landmark = True
+                        break
+            
+            # If not a custom pin, check if it's a landmark
+            landmark_pins_hidden = hasattr(state, 'landmark_pins_hidden') and state.landmark_pins_hidden
+            if not found_pin_or_landmark and not landmark_pins_hidden:
+                for i, (lx, ly) in enumerate(state.landmark_positions):
+                    dx, dy = lx - x, ly - y
+                    dist_sq = dx*dx + dy*dy
+                    
+                    # Check if click is within the landmark selection threshold
+                    if dist_sq < pin_selection_threshold_sq:
+                        state.drag_index = i
+                        state.drag_offset = (lx - x, ly - y)
+                        found_pin_or_landmark = True
+                        break
+            
+            # If no existing pin or landmark was found, create a new pin at the click location
+            if not found_pin_or_landmark:
+                add_custom_pin(x, y, state)
+                return
+        
+        # Handle pin selection in TOGGLE_PINS mode
+        elif state.mode == Mode.TOGGLE_PINS:
+            # Calculate adaptive search radius for TOGGLE_PINS mode
+            pin_radius_sq = (ui['pin_radius'] * 1.5) ** 2  # Slightly larger than visible radius
+            
+            # Check if click is on a custom pin
             for i, pin_data in enumerate(state.pins_per_image[state.current_image_idx]):
                 # Handle both 4-tuple and 5-tuple pin formats for backward compatibility
                 if len(pin_data) >= 2:  # At minimum we need x,y
@@ -89,16 +121,6 @@ def on_mouse(event, x, y, flags, _, state):
                         state.drag_index = i + len(state.landmark_positions)  # Offset by landmark count
                         state.drag_offset = (px - x, py - y)
                         return
-            
-            # In TOGGLE_PINS mode, we don't check for landmarks
-            if state.mode != Mode.TOGGLE_PINS:
-                # If not a custom pin, check if it's a landmark
-                for i, (lx, ly) in enumerate(state.landmark_positions):
-                    dx, dy = lx - x, ly - y
-                    if dx*dx + dy*dy < landmark_radius_sq:
-                        state.drag_index = i
-                        state.drag_offset = (lx - x, ly - y)
-                        break
 
     elif event == cv2.EVENT_MOUSEMOVE:
         if state.drag_index != -1:

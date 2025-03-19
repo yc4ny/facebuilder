@@ -56,7 +56,6 @@ def redraw(state):
     draw_button_with_text(ui['center_geo_button_rect'], "Center Geo")
     draw_button_with_text(ui['align_button_rect'], "Align Face")
     draw_button_with_text(ui['reset_shape_button_rect'], "Reset Shape")
-    draw_button_with_text(ui['add_pin_button_rect'], "Add Pins", state.mode == Mode.ADD_PIN)
     draw_button_with_text(ui['remove_pins_button_rect'], "Remove Pins")
     draw_button_with_text(ui['toggle_pins_button_rect'], "Toggle Pins", state.mode == Mode.TOGGLE_PINS)
     draw_button_with_text(ui['save_button_rect'], "Save Mesh")
@@ -70,9 +69,7 @@ def redraw(state):
                 ui['text_size'] * 2, (255,120,0), ui['text_thickness']*2)
     
     # Show current mode
-    if state.mode == Mode.ADD_PIN:
-        mode_text = "Mode: ADD PIN"
-    elif state.mode == Mode.TOGGLE_PINS:
+    if state.mode == Mode.TOGGLE_PINS:
         mode_text = "Mode: TOGGLE PINS"
     else:
         # Count active pins to determine if we're in single pin mode or regular move mode
@@ -90,5 +87,12 @@ def redraw(state):
     
     cv2.putText(disp, mode_text, (status_x, status_y2), 
                 cv2.FONT_HERSHEY_SIMPLEX, ui['text_size']*2, (255,120,0), ui['text_thickness']*2)
+    
+    # Add a user hint for adding pins
+    # Calculate hint position based on the UI dimensions
+    hint_y = status_y2 + int(ui['landmark_radius'] * 8)
+    cv2.putText(disp, "Click on mesh to add pins", 
+                (status_x, hint_y), cv2.FONT_HERSHEY_SIMPLEX, 
+                ui['text_size']*1.5, (0,200,0), ui['text_thickness'])
     
     cv2.imshow(WINDOW_NAME, disp)
