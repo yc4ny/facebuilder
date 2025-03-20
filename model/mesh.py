@@ -3,8 +3,54 @@ import numpy as np
 import cv2
 from utils.geometry import back_project_2d_to_3d, inverse_ortho
 
+def update_3d_vertices(state, original_verts2d=None):
+    # Skip 3D update if we've directly manipulated 2D vertices in the two-pin case
+    if hasattr(state, 'skip_projection') and state.skip_projection:
+        state.skip_projection = False
+        return
+        
+    # Get current camera parameters for this view
+    camera_matrix = state.camera_matrices[state.current_image_idx]
+    rvec = state.rotations[state.current_image_idx]
+    tvec = state.translations[state.current_image_idx]
+    
+    # Check if we have camera parameters for this view
+    if camera_matrix is not None and rvec is not None and tvec is not None:
+        # Use perspective back-projection when we have camera parameters
+        updated_verts3d = back_project_2d_to_3d(
+            state.verts2d,
+            state.verts3d,  # Use current 3D vertices, not defaults
+            camera_matrix,
+            rvec,
+            tvec
+        )
+        
+        if updated_verts3d is not None:
+            # Blend the updated vertices with current vertices to maintain stability
+            blend_factor = 0.8  # 80% new, 20% old - can be adjusted for stability
+            state.verts3d = blend_factor * updated_verts3d + (1 - blend_factor) * state.verts3d
+    else:
+        # Use inverse orthographic projection when no camera parameters
+        # Calculate the model parameters for inverse orthographic projection
+        mn = state.verts3d[:, :2].min(axis=0)
+        mx = state.verts3d[:, :2].max(axis=0)
+        c3d = 0.5 * (mn + mx)
+        s3d = (mx - mn).max()
+        sc = 0.8 * min(state.img_w, state.img_h) / s3d
+        c2d = np.array([state.img_w/2.0, state.img_h/2.0])
+        
+        # Use inverse orthographic projection
+        updated_verts3d = inverse_ortho(
+            state.verts2d,
+            state.verts3d,  # Use current 3D vertices, not defaults
+            c3d,
+            c2d,
+            sc
+        )
+        
+        state.verts3d = updated_verts3d
+
 def move_mesh_2d(state, old_lx, old_ly, dx, dy):
-    """Move the mesh vertices based on the dragged point and update 3D mesh"""
     # Check if we're dragging a pin (not a landmark)
     is_dragging_pin = (state.drag_index != -1 and 
                        state.drag_index >= len(state.landmark_positions))
@@ -17,6 +63,7 @@ def move_mesh_2d(state, old_lx, old_ly, dx, dy):
     # Check if we have exactly two pins
     pins = state.pins_per_image[state.current_image_idx]
     has_two_pins = len(pins) == 2
+    has_multiple_pins = len(pins) >= 2
     
     # If we're dragging a pin and have camera parameters
     if is_dragging_pin and camera_matrix is not None and rvec is not None and tvec is not None:
@@ -33,147 +80,30 @@ def move_mesh_2d(state, old_lx, old_ly, dx, dy):
                 original_verts3d = state.verts3d.copy()
                 original_verts2d = state.verts2d.copy()
                 
-                # TWO PINS CASE
-                if has_two_pins:
-                    # Find the other (fixed) pin
-                    other_pin_idx = 1 if pin_idx == 0 else 0
-                    other_pin_data = pins[other_pin_idx]
-                    other_pin_3d_pos = other_pin_data[4] if len(other_pin_data) >= 5 else None
-                    
-                    if other_pin_3d_pos is None:
-                        # If the other pin doesn't have a 3D position, fall back to single pin case
-                        has_two_pins = False
-                    else:
-                        try:
-                            # Project both pins and mesh to 2D using current transform
-                            # Get current 2D positions
-                            dragged_pin_2d = np.array([old_lx, old_ly])
-                            other_pin_2d = np.array([other_pin_data[0], other_pin_data[1]])
-                            
-                            # Calculate center between the two pins
-                            center_2d = (dragged_pin_2d + other_pin_2d) / 2
-                            
-                            # Get new desired position for dragged pin
-                            new_dragged_pin_2d = dragged_pin_2d + np.array([dx, dy])
-                            
-                            # Calculate vectors from center
-                            vec_old = dragged_pin_2d - center_2d
-                            vec_new = new_dragged_pin_2d - center_2d
-                            
-                            # Calculate scaling factor (enlargement/reduction)
-                            old_dist = np.linalg.norm(vec_old)
-                            new_dist = np.linalg.norm(vec_new)
-                            
-                            if old_dist > 1e-5:  # Avoid division by zero
-                                scale_factor = new_dist / old_dist
-                            else:
-                                scale_factor = 1.0
-                            
-                            # Limit scaling to prevent extreme changes
-                            scale_factor = np.clip(scale_factor, 0.95, 1.05)
-                            
-                            # Calculate rotation angle for circular movement
-                            angle = 0.0
-                            if old_dist > 1e-5 and new_dist > 1e-5:
-                                # Normalize vectors
-                                vec_old_norm = vec_old / old_dist
-                                vec_new_norm = vec_new / new_dist
-                                
-                                # Calculate angle between vectors
-                                dot_product = np.clip(np.dot(vec_old_norm, vec_new_norm), -1.0, 1.0)
-                                angle = np.arccos(dot_product)
-                                
-                                # Determine rotation direction using cross product (2D version)
-                                cross_z = vec_old_norm[0] * vec_new_norm[1] - vec_old_norm[1] * vec_new_norm[0]
-                                if cross_z < 0:
-                                    angle = -angle
-                            
-                            # Create 2D transformation matrix (rotation + scaling)
-                            cos_angle = np.cos(angle)
-                            sin_angle = np.sin(angle)
-                            rotation_matrix = np.array([
-                                [cos_angle, -sin_angle],
-                                [sin_angle, cos_angle]
-                            ])
-                            
-                            # Apply transformation to vertices in screen space:
-                            # 1. Center the vertices on the pin center
-                            centered_verts = state.verts2d - center_2d
-                            
-                            # 2. Apply rotation
-                            rotated_verts = np.zeros_like(centered_verts)
-                            for i in range(len(centered_verts)):
-                                rotated_verts[i] = rotation_matrix @ centered_verts[i]
-                            
-                            # 3. Apply scaling
-                            scaled_verts = rotated_verts * scale_factor
-                            
-                            # 4. Move back to original center
-                            transformed_verts = scaled_verts + center_2d
-                            
-                            # Transform the pins too (to keep them attached to mesh)
-                            # For the dragged pin
-                            centered_dragged = dragged_pin_2d - center_2d
-                            rotated_dragged = rotation_matrix @ centered_dragged
-                            scaled_dragged = rotated_dragged * scale_factor
-                            transformed_dragged = scaled_dragged + center_2d
-                            
-                            # For the other pin
-                            centered_other = other_pin_2d - center_2d
-                            rotated_other = rotation_matrix @ centered_other
-                            scaled_other = rotated_other * scale_factor
-                            transformed_other = scaled_other + center_2d
-                            
-                            # Check that the transformed positions are reasonable
-                            # (not going too far out of bounds)
-                            img_w, img_h = state.img_w, state.img_h
-                            margin = max(img_w, img_h) * 0.8
-                            
-                            vertices_in_bounds = np.logical_and(
-                                np.logical_and(transformed_verts[:, 0] > -margin, transformed_verts[:, 0] < img_w + margin),
-                                np.logical_and(transformed_verts[:, 1] > -margin, transformed_verts[:, 1] < img_h + margin)
-                            )
-                            
-                            pins_in_bounds = (
-                                -margin < transformed_dragged[0] < img_w + margin and
-                                -margin < transformed_dragged[1] < img_h + margin and
-                                -margin < transformed_other[0] < img_w + margin and
-                                -margin < transformed_other[1] < img_h + margin
-                            )
-                            
-                            if np.mean(vertices_in_bounds) >= 0.6 and pins_in_bounds:
-                                # Directly update 2D vertex positions
-                                state.verts2d = transformed_verts
-                                
-                                # Directly update pin positions in the state
-                                state.pins_per_image[state.current_image_idx][pin_idx] = (
-                                    transformed_dragged[0], transformed_dragged[1],
-                                    dragged_pin_data[2], dragged_pin_data[3], dragged_pin_3d_pos
-                                )
-                                
-                                state.pins_per_image[state.current_image_idx][other_pin_idx] = (
-                                    transformed_other[0], transformed_other[1],
-                                    other_pin_data[2], other_pin_data[3], other_pin_3d_pos
-                                )
-                                
-                                # Set the flag to skip 3D-2D projection and back-projection
-                                # This ensures we use our 2D coordinates directly
-                                state.skip_projection = True
-                                
-                                # Redraw with our 2D changes
-                                state.callbacks['redraw'](state)
-                                return
-                            else:
-                                # Revert changes if the transformation would go out of bounds
-                                print("Transformation would cause vertices to go out of bounds")
+                # MULTIPLE PINS CASE (2 or more pins)
+                if has_multiple_pins:
+                    # Handle with transform_mesh_rigid which now supports both 2-pin and 3+ pin cases
+                    try:
+                        # Get target position
+                        new_x = old_lx + dx
+                        new_y = old_ly + dy
                         
-                        except Exception as e:
-                            # Revert to original values and fall back to single-pin case if there's an error
-                            print(f"Error during dual pin handling: {e}")
-                            state.verts2d = original_verts2d
+                        transform_mesh_rigid(state, pin_idx, old_lx, old_ly, new_x, new_y)
+                        
+                        # Set the flag to skip 3D-2D projection and back-projection
+                        # This ensures we use our 2D coordinates directly
+                        state.skip_projection = True
+                        
+                        # Redraw with our 2D changes
+                        state.callbacks['redraw'](state)
+                        return
+                    except Exception as e:
+                        # Revert to original values and fall back to single pin case if there's an error
+                        print(f"Error during multi-pin handling: {e}")
+                        state.verts2d = original_verts2d
                 
                 # SINGLE PIN CASE
-                if not has_two_pins:
+                if not has_multiple_pins:
                     # Convert movement to rotation
                     # Calculate movement vector in 2D screen space
                     movement_2d = np.array([dx, dy])
@@ -327,67 +257,8 @@ def move_mesh_2d(state, old_lx, old_ly, dx, dy):
     # Update the 3D vertices based on the 2D movement
     update_3d_vertices(state, original_verts2d)
 
-def update_3d_vertices(state, original_verts2d=None):
-    """
-    Update the 3D vertices based on the current 2D projection
-    
-    Args:
-        state: Application state
-        original_verts2d: Original 2D vertices before modification (for differential update)
-    """
-    # Skip 3D update if we've directly manipulated 2D vertices in the two-pin case
-    if hasattr(state, 'skip_projection') and state.skip_projection:
-        state.skip_projection = False
-        return
-        
-    # Get current camera parameters for this view
-    camera_matrix = state.camera_matrices[state.current_image_idx]
-    rvec = state.rotations[state.current_image_idx]
-    tvec = state.translations[state.current_image_idx]
-    
-    # Check if we have camera parameters for this view
-    if camera_matrix is not None and rvec is not None and tvec is not None:
-        # Use perspective back-projection when we have camera parameters
-        updated_verts3d = back_project_2d_to_3d(
-            state.verts2d,
-            state.verts3d,  # Use current 3D vertices, not defaults
-            camera_matrix,
-            rvec,
-            tvec
-        )
-        
-        if updated_verts3d is not None:
-            # Blend the updated vertices with current vertices to maintain stability
-            blend_factor = 0.8  # 80% new, 20% old - can be adjusted for stability
-            state.verts3d = blend_factor * updated_verts3d + (1 - blend_factor) * state.verts3d
-    else:
-        # Use inverse orthographic projection when no camera parameters
-        # Calculate the model parameters for inverse orthographic projection
-        mn = state.verts3d[:, :2].min(axis=0)
-        mx = state.verts3d[:, :2].max(axis=0)
-        c3d = 0.5 * (mn + mx)
-        s3d = (mx - mn).max()
-        sc = 0.8 * min(state.img_w, state.img_h) / s3d
-        c2d = np.array([state.img_w/2.0, state.img_h/2.0])
-        
-        # Use inverse orthographic projection
-        updated_verts3d = inverse_ortho(
-            state.verts2d,
-            state.verts3d,  # Use current 3D vertices, not defaults
-            c3d,
-            c2d,
-            sc
-        )
-        
-        state.verts3d = updated_verts3d
 
 def project_current_3d_to_2d(state):
-    """
-    Project the current 3D vertices to 2D for the current view
-    
-    Args:
-        state: Application state
-    """
     # Skip projection if we've directly manipulated 2D vertices in the two-pin case
     if hasattr(state, 'skip_projection') and state.skip_projection:
         state.skip_projection = False
@@ -429,14 +300,8 @@ def project_current_3d_to_2d(state):
 
 def transform_mesh_rigid(state, dragged_pin_idx, old_x, old_y, new_x, new_y):
     """
-    Apply a rigid transformation to the mesh, preserving the position of 
-    all pins except the dragged one, and updating the scale based on dragging.
-    
-    Args:
-        state: Application state
-        dragged_pin_idx: Index of the pin being dragged (in state.pins_per_image)
-        old_x, old_y: Original position of the dragged pin
-        new_x, new_y: New position of the dragged pin
+    Transform the mesh based on pin movement.
+    For 2+ pins: Uses rigid transformation that keeps all non-dragged pins fixed.
     """
     # Get pins for current image
     pins = state.pins_per_image[state.current_image_idx]
@@ -445,71 +310,174 @@ def transform_mesh_rigid(state, dragged_pin_idx, old_x, old_y, new_x, new_y):
     if len(pins) < 2:
         return
     
-    # Find anchor pin (first non-dragged pin)
-    anchor_idx = None
+    # Collect all non-dragged pins
+    fixed_pins = []
     for i, pin in enumerate(pins):
         if i != dragged_pin_idx:
-            anchor_idx = i
-            break
+            fixed_pins.append((i, pin[0], pin[1]))
     
-    if anchor_idx is None:
-        return  # Should not happen
-    
-    # Get anchor pin coordinates
-    anchor_x, anchor_y = pins[anchor_idx][0], pins[anchor_idx][1]
-    
-    # Calculate vectors before and after dragging
-    vec_before = np.array([old_x - anchor_x, old_y - anchor_y])
-    vec_after = np.array([new_x - anchor_x, new_y - anchor_y])
-    
-    # Calculate scale change
-    len_before = np.linalg.norm(vec_before)
-    len_after = np.linalg.norm(vec_after)
-    scale_factor = len_after / len_before if len_before > 0 else 1.0
-    
-    # Calculate rotation angle (in radians)
-    dot_product = np.dot(vec_before, vec_after)
-    det = vec_before[0] * vec_after[1] - vec_before[1] * vec_after[0]
-    angle = np.arctan2(det, dot_product)
-    
-    # Create transformation matrix (scale and rotation around anchor)
-    cos_angle = np.cos(angle)
-    sin_angle = np.sin(angle)
-    
-    # Translation to anchor (for transformation center)
-    translate_to_anchor = np.array([
-        [1, 0, -anchor_x],
-        [0, 1, -anchor_y],
-        [0, 0, 1]
-    ])
-    
-    # Scale and rotation
-    scale_and_rotate = np.array([
-        [scale_factor * cos_angle, -scale_factor * sin_angle, 0],
-        [scale_factor * sin_angle, scale_factor * cos_angle, 0],
-        [0, 0, 1]
-    ])
-    
-    # Translation back from anchor
-    translate_from_anchor = np.array([
-        [1, 0, anchor_x],
-        [0, 1, anchor_y],
-        [0, 0, 1]
-    ])
-    
-    # Combined transformation matrix
-    transform = translate_from_anchor @ scale_and_rotate @ translate_to_anchor
-    
-    # Apply transformation to 2D vertices
-    verts_homogeneous = np.column_stack((state.verts2d, np.ones(len(state.verts2d))))
-    transformed_verts = (transform @ verts_homogeneous.T).T
-    state.verts2d = transformed_verts[:, :2]
-    
-    # Update 3D vertices based on the 2D transformation
-    update_3d_vertices(state)
-    
-    # Update landmarks and custom pins
-    from model.landmarks import update_all_landmarks
-    update_all_landmarks(state)
-    from model.pins import update_custom_pins
-    update_custom_pins(state)
+    # For all multi-pin cases (2 or more pins)
+    if len(fixed_pins) > 0:
+        # We'll use the first fixed pin as our primary anchor
+        anchor_idx = fixed_pins[0][0]
+        anchor_x, anchor_y = fixed_pins[0][1], fixed_pins[0][2]
+        
+        # Calculate vectors before and after dragging relative to this anchor
+        vec_before = np.array([old_x - anchor_x, old_y - anchor_y])
+        vec_after = np.array([new_x - anchor_x, new_y - anchor_y])
+        
+        # Calculate scale change
+        len_before = np.linalg.norm(vec_before)
+        len_after = np.linalg.norm(vec_after)
+        scale_factor = len_after / len_before if len_before > 0 else 1.0
+        
+        # Limit scaling to prevent extreme changes
+        scale_factor = np.clip(scale_factor, 0.8, 1.2)
+        
+        # Calculate rotation angle (in radians)
+        if len_before > 1e-5 and len_after > 1e-5:
+            dot_product = np.dot(vec_before, vec_after)
+            det = vec_before[0] * vec_after[1] - vec_before[1] * vec_after[0]
+            angle = np.arctan2(det, dot_product)
+        else:
+            angle = 0.0
+        
+        # Create transformation matrix (scale and rotation around anchor)
+        cos_angle = np.cos(angle)
+        sin_angle = np.sin(angle)
+        
+        # Translation to anchor (for transformation center)
+        translate_to_anchor = np.array([
+            [1, 0, -anchor_x],
+            [0, 1, -anchor_y],
+            [0, 0, 1]
+        ])
+        
+        # Scale and rotation
+        scale_and_rotate = np.array([
+            [scale_factor * cos_angle, -scale_factor * sin_angle, 0],
+            [scale_factor * sin_angle, scale_factor * cos_angle, 0],
+            [0, 0, 1]
+        ])
+        
+        # Translation back from anchor
+        translate_from_anchor = np.array([
+            [1, 0, anchor_x],
+            [0, 1, anchor_y],
+            [0, 0, 1]
+        ])
+        
+        # Combined transformation matrix
+        initial_transform = translate_from_anchor @ scale_and_rotate @ translate_to_anchor
+        
+        # Apply initial transformation to 2D vertices
+        verts_homogeneous = np.column_stack((state.verts2d, np.ones(len(state.verts2d))))
+        transformed_verts = (initial_transform @ verts_homogeneous.T).T
+        transformed_2d = transformed_verts[:, :2]
+        
+        # Now we need to apply additional corrections to keep ALL other fixed pins in place
+        # This is crucial for the 3+ pin case
+        
+        # If we have more than one fixed pin, we need additional corrections
+        if len(fixed_pins) > 1:
+            # We'll use a thin plate spline-like approach
+            # First, identify the original and target positions for the control points
+            
+            # Control points include all fixed pins (which should stay in place)
+            # and the dragged pin (which should move to the new position)
+            control_points_src = []  # Original positions
+            control_points_dst = []  # Target positions
+            
+            # Add the dragged pin
+            control_points_src.append([old_x, old_y])
+            control_points_dst.append([new_x, new_y])
+            
+            # Add all fixed pins (they should stay in place)
+            for _, fx, fy in fixed_pins:
+                control_points_src.append([fx, fy])
+                control_points_dst.append([fx, fy])
+            
+            # Convert to numpy arrays
+            control_points_src = np.array(control_points_src)
+            control_points_dst = np.array(control_points_dst)
+            
+            # Compute displacements between where pins would go under the initial 
+            # transformation vs. where they should be
+            pin_displacements = []
+            
+            for i, (_, fx, fy) in enumerate(fixed_pins):
+                # Original position
+                original_pos = np.array([fx, fy])
+                
+                # Position after initial transformation
+                pin_homogeneous = np.array([fx, fy, 1])
+                transformed_pos = (initial_transform @ pin_homogeneous)[:2]
+                
+                # Displacement needed to keep this pin fixed
+                displacement = original_pos - transformed_pos
+                pin_displacements.append((fx, fy, displacement))
+            
+            # Apply displacements to all vertices using inverse distance weighting
+            # This ensures pins stay fixed while smoothly transitioning between them
+            correction = np.zeros((len(state.verts2d), 2))
+            
+            for v_idx, v_pos in enumerate(transformed_2d):
+                # Compute weights based on distance to each pin
+                weights = []
+                
+                for px, py, _ in pin_displacements:
+                    dist = np.sqrt((v_pos[0] - px)**2 + (v_pos[1] - py)**2)
+                    # Avoid division by zero and create smoother falloff
+                    weight = 1.0 / (dist + 1e-6)**2
+                    weights.append(weight)
+                
+                # Normalize weights
+                total_weight = sum(weights)
+                if total_weight > 0:
+                    weights = [w / total_weight for w in weights]
+                
+                # Apply weighted displacements
+                for i, (_, _, disp) in enumerate(pin_displacements):
+                    correction[v_idx] += weights[i] * disp
+            
+            # Apply corrections to get final vertex positions
+            final_verts = transformed_2d + correction
+            
+            # Check that the transformed positions are reasonable
+            img_w, img_h = state.img_w, state.img_h
+            margin = max(img_w, img_h) * 0.8
+            
+            vertices_in_bounds = np.logical_and(
+                np.logical_and(final_verts[:, 0] > -margin, final_verts[:, 0] < img_w + margin),
+                np.logical_and(final_verts[:, 1] > -margin, final_verts[:, 1] < img_h + margin)
+            )
+            
+            if np.mean(vertices_in_bounds) >= 0.6:
+                # Update vertices with corrected positions
+                state.verts2d = final_verts
+            else:
+                print("Transformation would cause vertices to go out of bounds")
+                return
+        else:
+            # For 2-pin case, just use the initial transformation
+            state.verts2d = transformed_2d
+        
+        # Update dragged pin position
+        pin_data = pins[dragged_pin_idx]
+        if len(pin_data) >= 5:  # 5-tuple format
+            state.pins_per_image[state.current_image_idx][dragged_pin_idx] = (
+                new_x, new_y, pin_data[2], pin_data[3], pin_data[4]
+            )
+        else:  # 4-tuple format
+            state.pins_per_image[state.current_image_idx][dragged_pin_idx] = (
+                new_x, new_y, pin_data[2], pin_data[3]
+            )
+        
+        # Update 3D vertices based on the 2D transformation
+        update_3d_vertices(state)
+        
+        # Update landmarks and custom pins
+        from model.landmarks import update_all_landmarks
+        update_all_landmarks(state)
+        from model.pins import update_custom_pins
+        update_custom_pins(state)
