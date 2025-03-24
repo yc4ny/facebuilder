@@ -57,8 +57,19 @@ def update_custom_pins(state):
     rvec = state.rotations[state.current_image_idx]
     tvec = state.translations[state.current_image_idx]
     
+    # Check if a pin is being dragged
+    is_dragging_pin = (state.drag_index != -1 and 
+                      state.drag_index >= len(state.landmark_positions))
+    dragged_pin_idx = state.drag_index - len(state.landmark_positions) if is_dragging_pin else -1
+    
     updated_pins = []
-    for pin_data in state.pins_per_image[state.current_image_idx]:
+    for i, pin_data in enumerate(state.pins_per_image[state.current_image_idx]):
+        # Check if this pin is being dragged
+        if i == dragged_pin_idx:
+            # Preserve the position of the dragged pin
+            updated_pins.append(pin_data)
+            continue
+        
         # Support both 4-tuple and 5-tuple pin formats for backward compatibility
         face_idx = pin_data[2]
         bc = pin_data[3]
