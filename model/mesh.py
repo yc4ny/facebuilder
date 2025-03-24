@@ -3,53 +3,6 @@ import numpy as np
 import cv2
 from utils.geometry import back_project_2d_to_3d, inverse_ortho
 
-def update_3d_vertices(state, original_verts2d=None):
-    # Skip 3D update if we've directly manipulated 2D vertices in the two-pin case
-    if hasattr(state, 'skip_projection') and state.skip_projection:
-        state.skip_projection = False
-        return
-        
-    # Get current camera parameters for this view
-    camera_matrix = state.camera_matrices[state.current_image_idx]
-    rvec = state.rotations[state.current_image_idx]
-    tvec = state.translations[state.current_image_idx]
-    
-    # Check if we have camera parameters for this view
-    if camera_matrix is not None and rvec is not None and tvec is not None:
-        # Use perspective back-projection when we have camera parameters
-        updated_verts3d = back_project_2d_to_3d(
-            state.verts2d,
-            state.verts3d,  # Use current 3D vertices, not defaults
-            camera_matrix,
-            rvec,
-            tvec
-        )
-        
-        if updated_verts3d is not None:
-            # Blend the updated vertices with current vertices to maintain stability
-            blend_factor = 0.8  # 80% new, 20% old - can be adjusted for stability
-            state.verts3d = blend_factor * updated_verts3d + (1 - blend_factor) * state.verts3d
-    else:
-        # Use inverse orthographic projection when no camera parameters
-        # Calculate the model parameters for inverse orthographic projection
-        mn = state.verts3d[:, :2].min(axis=0)
-        mx = state.verts3d[:, :2].max(axis=0)
-        c3d = 0.5 * (mn + mx)
-        s3d = (mx - mn).max()
-        sc = 0.8 * min(state.img_w, state.img_h) / s3d
-        c2d = np.array([state.img_w/2.0, state.img_h/2.0])
-        
-        # Use inverse orthographic projection
-        updated_verts3d = inverse_ortho(
-            state.verts2d,
-            state.verts3d,  # Use current 3D vertices, not defaults
-            c3d,
-            c2d,
-            sc
-        )
-        
-        state.verts3d = updated_verts3d
-
 def move_mesh_2d(state, old_lx, old_ly, dx, dy):
     # Check if we're dragging a pin (not a landmark)
     is_dragging_pin = (state.drag_index != -1 and 
@@ -642,3 +595,51 @@ def transform_mesh_rigid(state, dragged_pin_idx, old_x, old_y, new_x, new_y):
         else:
             print("Transformation would cause vertices to go out of bounds")
             return
+        
+
+def update_3d_vertices(state, original_verts2d=None):
+    # Skip 3D update if we've directly manipulated 2D vertices in the two-pin case
+    if hasattr(state, 'skip_projection') and state.skip_projection:
+        state.skip_projection = False
+        return
+        
+    # Get current camera parameters for this view
+    camera_matrix = state.camera_matrices[state.current_image_idx]
+    rvec = state.rotations[state.current_image_idx]
+    tvec = state.translations[state.current_image_idx]
+    
+    # Check if we have camera parameters for this view
+    if camera_matrix is not None and rvec is not None and tvec is not None:
+        # Use perspective back-projection when we have camera parameters
+        updated_verts3d = back_project_2d_to_3d(
+            state.verts2d,
+            state.verts3d,  # Use current 3D vertices, not defaults
+            camera_matrix,
+            rvec,
+            tvec
+        )
+        
+        if updated_verts3d is not None:
+            # Blend the updated vertices with current vertices to maintain stability
+            blend_factor = 0.8  # 80% new, 20% old - can be adjusted for stability
+            state.verts3d = blend_factor * updated_verts3d + (1 - blend_factor) * state.verts3d
+    else:
+        # Use inverse orthographic projection when no camera parameters
+        # Calculate the model parameters for inverse orthographic projection
+        mn = state.verts3d[:, :2].min(axis=0)
+        mx = state.verts3d[:, :2].max(axis=0)
+        c3d = 0.5 * (mn + mx)
+        s3d = (mx - mn).max()
+        sc = 0.8 * min(state.img_w, state.img_h) / s3d
+        c2d = np.array([state.img_w/2.0, state.img_h/2.0])
+        
+        # Use inverse orthographic projection
+        updated_verts3d = inverse_ortho(
+            state.verts2d,
+            state.verts3d,  # Use current 3D vertices, not defaults
+            c3d,
+            c2d,
+            sc
+        )
+        
+        state.verts3d = updated_verts3d
