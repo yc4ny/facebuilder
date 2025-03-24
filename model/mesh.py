@@ -79,14 +79,14 @@ def move_mesh_2d(state, old_lx, old_ly, dx, dy):
                 original_verts3d = state.verts3d.copy()
                 original_verts2d = state.verts2d.copy()
                 
+                # Get target position
+                new_x = old_lx + dx
+                new_y = old_ly + dy
+                
                 # MULTIPLE PINS CASE (2 or more pins)
                 if has_multiple_pins:
                     # Handle with transform_mesh_rigid which now supports 2-pin, 3-pin, and 4+ pin cases
                     try:
-                        # Get target position
-                        new_x = old_lx + dx
-                        new_y = old_ly + dy
-                        
                         transform_mesh_rigid(state, pin_idx, old_lx, old_ly, new_x, new_y)
                         
                         # Redraw with our 2D changes
@@ -144,7 +144,7 @@ def move_mesh_2d(state, old_lx, old_ly, dx, dy):
                         try:
                             # Now calculate translation to make the pin follow the mouse
                             # Get current mouse position
-                            mouse_pos = np.array([old_lx + dx, old_ly + dy])
+                            mouse_pos = np.array([new_x, new_y])
                             
                             # Current rotation matrix
                             R, _ = cv2.Rodrigues(new_rvec)
@@ -195,7 +195,18 @@ def move_mesh_2d(state, old_lx, old_ly, dx, dy):
                                 # Update 2D vertex positions
                                 state.verts2d = projected_2d
                                 
-                                # Update pin positions
+                                # CRITICAL: Directly update the dragged pin position to follow mouse
+                                pin_data = pins[pin_idx]
+                                if len(pin_data) >= 5:  # 5-tuple format
+                                    state.pins_per_image[state.current_image_idx][pin_idx] = (
+                                        new_x, new_y, pin_data[2], pin_data[3], pin_data[4]
+                                    )
+                                else:  # 4-tuple format
+                                    state.pins_per_image[state.current_image_idx][pin_idx] = (
+                                        new_x, new_y, pin_data[2], pin_data[3]
+                                    )
+                                
+                                # Update other pins (the dragged pin will be preserved by update_custom_pins)
                                 state.callbacks['update_custom_pins'](state)
                                 return
                             else:
@@ -239,6 +250,10 @@ def move_mesh_2d(state, old_lx, old_ly, dx, dy):
             norm_avg = avg_weight / np.sum(avg_weight)
             joint_w = np.dot(state.weights, norm_avg)
             combined_w = radial_w * joint_w
+            
+            # Get new position for direct pin update
+            new_x = old_lx + dx
+            new_y = old_ly + dy
     else:
         combined_w = radial_w
     
@@ -248,6 +263,23 @@ def move_mesh_2d(state, old_lx, old_ly, dx, dy):
     # Apply the calculated weights to move vertices in 2D
     shift = np.column_stack((combined_w * dx, combined_w * dy))
     state.verts2d += shift
+    
+    # If we're dragging a pin, update its position directly
+    if is_dragging_pin:
+        pin_idx = state.drag_index - len(state.landmark_positions)
+        if pin_idx < len(state.pins_per_image[state.current_image_idx]):
+            pin_data = state.pins_per_image[state.current_image_idx][pin_idx]
+            new_x = old_lx + dx
+            new_y = old_ly + dy
+            
+            if len(pin_data) >= 5:  # 5-tuple format
+                state.pins_per_image[state.current_image_idx][pin_idx] = (
+                    new_x, new_y, pin_data[2], pin_data[3], pin_data[4]
+                )
+            else:  # 4-tuple format
+                state.pins_per_image[state.current_image_idx][pin_idx] = (
+                    new_x, new_y, pin_data[2], pin_data[3]
+                )
     
     # Update the 3D vertices based on the 2D movement
     update_3d_vertices(state, original_verts2d)

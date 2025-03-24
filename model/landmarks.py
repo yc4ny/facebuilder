@@ -9,10 +9,7 @@ import mediapipe as mp
 def update_all_landmarks(state):
     """
     Update all predefined landmarks based on the current 3D mesh
-    
-    Note: With the constraint-based deformation system, landmarks should maintain
-    their positions during dragging operations, but this function is still needed
-    to update landmarks after projection or other global transformations.
+
     """
     # First update the 3D positions of landmarks
     for i in range(len(state.landmark3d)):
