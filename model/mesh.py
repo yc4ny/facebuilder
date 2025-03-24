@@ -237,47 +237,6 @@ def move_mesh_2d(state, old_lx, old_ly, dx, dy):
     # Update the 3D vertices based on the 2D movement
     update_3d_vertices(state, original_verts2d)
 
-
-def project_current_3d_to_2d(state):
-    # Skip projection if we've directly manipulated 2D vertices in the two-pin case
-    if hasattr(state, 'skip_projection') and state.skip_projection:
-        state.skip_projection = False
-        return True
-        
-    # Get current camera parameters
-    camera_matrix = state.camera_matrices[state.current_image_idx]
-    rvec = state.rotations[state.current_image_idx]
-    tvec = state.translations[state.current_image_idx]
-    
-    # Check if we have camera parameters for this view
-    if camera_matrix is not None and rvec is not None and tvec is not None:
-        # Use perspective projection
-        from utils.geometry import project_3d_to_2d
-        
-        projected_verts = project_3d_to_2d(
-            state.verts3d,  # Use current 3D vertices, not defaults
-            camera_matrix,
-            rvec,
-            tvec
-        )
-        
-        if projected_verts is not None:
-            state.verts2d = projected_verts
-            return True
-    
-    # Fall back to orthographic projection if no camera parameters or projection failed
-    mn = state.verts3d[:, :2].min(axis=0)
-    mx = state.verts3d[:, :2].max(axis=0)
-    c3d = 0.5 * (mn + mx)
-    s3d = (mx - mn).max()
-    sc = 0.8 * min(state.img_w, state.img_h) / s3d
-    c2d = np.array([state.img_w/2.0, state.img_h/2.0])
-    
-    from utils.geometry import ortho
-    state.verts2d = ortho(state.verts3d, c3d, c2d, sc)
-    return True
-
-
 def transform_mesh_rigid(state, dragged_pin_idx, old_x, old_y, new_x, new_y):
     """
     Transform the mesh based on pin movement.
@@ -643,3 +602,43 @@ def update_3d_vertices(state, original_verts2d=None):
         )
         
         state.verts3d = updated_verts3d
+        
+        
+def project_current_3d_to_2d(state):
+    # Skip projection if we've directly manipulated 2D vertices in the two-pin case
+    if hasattr(state, 'skip_projection') and state.skip_projection:
+        state.skip_projection = False
+        return True
+        
+    # Get current camera parameters
+    camera_matrix = state.camera_matrices[state.current_image_idx]
+    rvec = state.rotations[state.current_image_idx]
+    tvec = state.translations[state.current_image_idx]
+    
+    # Check if we have camera parameters for this view
+    if camera_matrix is not None and rvec is not None and tvec is not None:
+        # Use perspective projection
+        from utils.geometry import project_3d_to_2d
+        
+        projected_verts = project_3d_to_2d(
+            state.verts3d,  # Use current 3D vertices, not defaults
+            camera_matrix,
+            rvec,
+            tvec
+        )
+        
+        if projected_verts is not None:
+            state.verts2d = projected_verts
+            return True
+    
+    # Fall back to orthographic projection if no camera parameters or projection failed
+    mn = state.verts3d[:, :2].min(axis=0)
+    mx = state.verts3d[:, :2].max(axis=0)
+    c3d = 0.5 * (mn + mx)
+    s3d = (mx - mn).max()
+    sc = 0.8 * min(state.img_w, state.img_h) / s3d
+    c2d = np.array([state.img_w/2.0, state.img_h/2.0])
+    
+    from utils.geometry import ortho
+    state.verts2d = ortho(state.verts3d, c3d, c2d, sc)
+    return True
