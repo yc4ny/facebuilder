@@ -21,4 +21,7 @@
 **Facebuilder**
 
 ![1pin](assets/1pin.gif)
+![2pin](assets/2pin.gif)
+![3pin](assets/3pin.gif)
+
 
