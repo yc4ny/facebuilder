@@ -29,6 +29,7 @@ def calculate_ui_dimensions(img_w, img_h):
     save_button_width = button_width
     next_img_button_width = button_width
     prev_img_button_width = button_width
+    visualizer_button_width = button_width  # New 3D visualizer button
     
     # Calculate button positions - all in one row
     current_x = button_margin
@@ -63,6 +64,10 @@ def calculate_ui_dimensions(img_w, img_h):
     
     # Prev Image button (8th)
     prev_img_button_rect = (current_x, button_margin, prev_img_button_width, button_height)
+    current_x += prev_img_button_width + button_margin
+    
+    # 3D Visualizer button (9th - new)
+    visualizer_button_rect = (current_x, button_margin, visualizer_button_width, button_height)
     
     # Status text position
     status_text_x = img_w - int(img_w * 0.25)
@@ -78,6 +83,7 @@ def calculate_ui_dimensions(img_w, img_h):
         'save_button_rect': save_button_rect,
         'next_img_button_rect': next_img_button_rect,
         'prev_img_button_rect': prev_img_button_rect,
+        'visualizer_button_rect': visualizer_button_rect,  # Added 3D Visualizer button
         'text_size': text_size,
         'text_thickness': text_thickness,
         'line_thickness': line_thickness,

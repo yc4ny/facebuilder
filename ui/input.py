@@ -11,6 +11,26 @@ def on_mouse(event, x, y, flags, _, state):
     # Calculate UI dimensions based on current image size
     ui = state.ui_dimensions
     
+    # Add zoom functionality with mouse wheel
+    if event == cv2.EVENT_MOUSEWHEEL:
+        if state.mode == Mode.VIEW_3D:
+            # In OpenCV, flags contain the scroll information 
+            # Positive for zoom in, negative for zoom out
+            wheel_direction = 1 if flags > 0 else -1
+            
+            # Initialize zoom factor if not present
+            if not hasattr(state, 'view_3d_zoom'):
+                state.view_3d_zoom = 1.0
+                
+            # Update zoom factor (adjust the 0.1 multiplier for sensitivity)
+            state.view_3d_zoom += wheel_direction * 0.1
+            
+            # Clamp zoom to reasonable range
+            state.view_3d_zoom = max(0.5, min(3.0, state.view_3d_zoom))
+            
+            state.callbacks['redraw'](state)
+            return
+    
     # Check for button clicks
     if event == cv2.EVENT_LBUTTONDOWN:
         # Center Geo button 
@@ -60,6 +80,25 @@ def on_mouse(event, x, y, flags, _, state):
         bx, by, bw, bh = ui['prev_img_button_rect']
         if bx <= x <= bx + bw and by <= y <= by + bh:
             state.callbacks['prev_image'](state)
+            return
+            
+        # 3D Visualizer button (new)
+        bx, by, bw, bh = ui['visualizer_button_rect']
+        if bx <= x <= bx + bw and by <= y <= by + bh:
+            # Toggle 3D view mode
+            state.mode = Mode.VIEW_3D if state.mode != Mode.VIEW_3D else Mode.MOVE
+            
+            # Initialize rotation angles if first time entering 3D mode
+            if not hasattr(state, 'view_3d_rotation_x'):
+                state.view_3d_rotation_x = 0.0
+                state.view_3d_rotation_y = 0.0
+                
+            state.callbacks['update_ui'](state)
+            return
+        
+        # In 3D view mode, start rotation
+        if state.mode == Mode.VIEW_3D:
+            state.drag_start_pos = (x, y)
             return
         
         # In MOVE mode, first check if the click is near an existing pin or landmark
@@ -123,6 +162,22 @@ def on_mouse(event, x, y, flags, _, state):
                         return
 
     elif event == cv2.EVENT_MOUSEMOVE:
+        # Handle 3D view rotation
+        if state.mode == Mode.VIEW_3D and hasattr(state, 'drag_start_pos') and state.drag_start_pos is not None:
+            # Calculate rotation based on mouse movement
+            dx = x - state.drag_start_pos[0]
+            dy = y - state.drag_start_pos[1]
+            
+            # Update 3D view rotation (scaled for better control)
+            state.view_3d_rotation_y += dx * 0.01
+            state.view_3d_rotation_x += dy * 0.01
+            
+            # Save current position for next move
+            state.drag_start_pos = (x, y)
+            
+            state.callbacks['redraw'](state)
+            return
+            
         if state.drag_index != -1:
             # Handle dragging landmarks
             if state.drag_index < len(state.landmark_positions) and state.mode != Mode.TOGGLE_PINS:
@@ -184,6 +239,10 @@ def on_mouse(event, x, y, flags, _, state):
             state.callbacks['redraw'](state)
 
     elif event == cv2.EVENT_LBUTTONUP:
+        # Reset drag start position in 3D view mode
+        if state.mode == Mode.VIEW_3D and hasattr(state, 'drag_start_pos'):
+            state.drag_start_pos = None
+            
         if state.drag_index != -1:
             # After finishing a drag operation, synchronize pins across all views
             if hasattr(state.callbacks, 'synchronize_pins') and callable(state.callbacks['synchronize_pins']):

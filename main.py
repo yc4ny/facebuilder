@@ -55,6 +55,12 @@ class FaceBuilderState:
         self.rotations = []  # Rotation vectors for each view
         self.translations = []  # Translation vectors for each view
         
+        # 3D visualization state variables
+        self.view_3d_rotation_x = np.pi  # Start with model right-side up (180 degrees around X)
+        self.view_3d_rotation_y = 0      # Start with model facing forward (0 degrees around Y)
+        self.view_3d_zoom = 0.7          # Initial zoom factor (smaller scale)
+        self.drag_start_pos = None       # Starting position for 3D view rotation
+        
         # Flag to track if we're in spherical rotation mode
         self.is_spherical_rotation = False
         
@@ -109,6 +115,7 @@ class FaceBuilderState:
             'synchronize_pins': synchronize_pins_across_views,
             'update_landmarks': update_all_landmarks  # Add this callback for circular dependency
         }
+
     
     def update_ui(self, state=None):
         """Update UI after changing image or mode"""
@@ -303,6 +310,8 @@ def main():
     print("- Click 'Center Geo' to reset the mesh to its default position")
     print("- Use 'Next Image' and 'Prev Image' to switch between input images")
     print("- Click 'Save' to save the current model to file")
+    print("- Click '3D View' to switch to interactive 3D visualization mode")
+    print("- In 3D View mode, drag with the mouse to rotate the model")
     print("- Drag landmarks or custom pins to manipulate the 3D mesh")
     print("- When using a single pin, the mesh will move with the pin and rotate based on position")
     print("- When dragged to left/right edge, the head rotates to face the opposite direction")

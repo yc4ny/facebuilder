@@ -4,7 +4,7 @@
   <p align="center">
     <a href="https://www.cubox.ai/"><strong>CUBOX AI Lab</strong></a><sup></sup>
   <div align="center">
-    <img src="./assets/facebuilder.png" alt="Logo" width="100%">
+    <img src="./assets/teaser.png" alt="Logo" width="100%">
   </div>
 
   <p align="center">

@@ -15,3 +15,4 @@ PIN_SELECTION_THRESHOLD = 15
 class Mode(Enum):
     MOVE = 0
     TOGGLE_PINS = 1  # Mode for toggling/selecting pins
+    VIEW_3D = 2      # Mode for 3D visualization
