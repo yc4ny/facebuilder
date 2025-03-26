@@ -360,6 +360,19 @@ def transform_mesh_rigid(state, dragged_pin_idx, old_x, old_y, new_x, new_y):
                             # Set the flag to skip 3D-2D projection cycle
                             state.skip_projection = True
                             
+                            # Add this after setting skip_projection = True
+                            # Update front_facing property directly
+                            from utils.geometry import calculate_front_facing
+                            if state.camera_matrices[state.current_image_idx] is not None and state.rotations[state.current_image_idx] is not None and state.translations[state.current_image_idx] is not None:
+                                state.front_facing = calculate_front_facing(
+                                    state.verts3d, state.faces,
+                                    camera_matrix=state.camera_matrices[state.current_image_idx],
+                                    rvec=state.rotations[state.current_image_idx],
+                                    tvec=state.translations[state.current_image_idx]
+                                )
+                            else:
+                                state.front_facing = calculate_front_facing(state.verts3d, state.faces)
+                            
                             # Update landmarks and custom pins
                             from model.landmarks import update_all_landmarks
                             update_all_landmarks(state)
@@ -456,6 +469,19 @@ def transform_mesh_rigid(state, dragged_pin_idx, old_x, old_y, new_x, new_y):
         
         # Set the flag to skip 3D-2D projection cycle
         state.skip_projection = True
+        
+        # Add this after setting skip_projection = True
+        # Update front_facing property directly
+        from utils.geometry import calculate_front_facing
+        if state.camera_matrices[state.current_image_idx] is not None and state.rotations[state.current_image_idx] is not None and state.translations[state.current_image_idx] is not None:
+            state.front_facing = calculate_front_facing(
+                state.verts3d, state.faces,
+                camera_matrix=state.camera_matrices[state.current_image_idx],
+                rvec=state.rotations[state.current_image_idx],
+                tvec=state.translations[state.current_image_idx]
+            )
+        else:
+            state.front_facing = calculate_front_facing(state.verts3d, state.faces)
         
         # Update 3D vertices based on the 2D transformation
         update_3d_vertices(state)
@@ -629,6 +655,14 @@ def project_current_3d_to_2d(state):
         
         if projected_verts is not None:
             state.verts2d = projected_verts
+            
+            # Calculate which faces are front-facing
+            from utils.geometry import calculate_front_facing
+            state.front_facing = calculate_front_facing(
+                state.verts3d, state.faces,
+                camera_matrix=camera_matrix, rvec=rvec, tvec=tvec
+            )
+            
             return True
     
     # Fall back to orthographic projection if no camera parameters or projection failed
@@ -639,6 +673,10 @@ def project_current_3d_to_2d(state):
     sc = 0.8 * min(state.img_w, state.img_h) / s3d
     c2d = np.array([state.img_w/2.0, state.img_h/2.0])
     
-    from utils.geometry import ortho
+    from utils.geometry import ortho, calculate_front_facing
     state.verts2d = ortho(state.verts3d, c3d, c2d, sc)
+    
+    # Calculate which faces are front-facing for orthographic projection
+    state.front_facing = calculate_front_facing(state.verts3d, state.faces)
+    
     return True

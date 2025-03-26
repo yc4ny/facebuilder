@@ -10,17 +10,28 @@ def redraw(state):
     # Calculate UI dimensions based on current image size
     ui = state.ui_dimensions
     
-    # Draw mesh triangles 
-    for (i0, i1, i2) in state.faces:
-        p0 = tuple(np.round(state.verts2d[i0]).astype(int))
-        p1 = tuple(np.round(state.verts2d[i1]).astype(int))
-        p2 = tuple(np.round(state.verts2d[i2]).astype(int))
-        cv2.line(disp, p0, p1, (0,0,0), ui['line_thickness'])
-        cv2.line(disp, p1, p2, (0,0,0), ui['line_thickness'])
-        cv2.line(disp, p2, p0, (0,0,0), ui['line_thickness'])
+    # Check if we have determined which faces are front-facing
+    # If not, default to showing all faces
+    front_facing = state.front_facing if state.front_facing is not None else np.ones(len(state.faces), dtype=bool)
     
-    # Draw vertices
-    for (x, y) in state.verts2d:
+    # Draw mesh triangles (only front-facing)
+    for i, (i0, i1, i2) in enumerate(state.faces):
+        if front_facing[i]:  # Only draw front-facing faces
+            p0 = tuple(np.round(state.verts2d[i0]).astype(int))
+            p1 = tuple(np.round(state.verts2d[i1]).astype(int))
+            p2 = tuple(np.round(state.verts2d[i2]).astype(int))
+            cv2.line(disp, p0, p1, (0,0,0), ui['line_thickness'])
+            cv2.line(disp, p1, p2, (0,0,0), ui['line_thickness'])
+            cv2.line(disp, p2, p0, (0,0,0), ui['line_thickness'])
+    
+    # Draw vertices (only those used by front-facing faces)
+    visible_vertices = set()
+    for i, face in enumerate(state.faces):
+        if front_facing[i]:
+            visible_vertices.update(face)
+    
+    for i in visible_vertices:
+        x, y = state.verts2d[i]
         cv2.circle(disp, (int(round(x)), int(round(y))), ui['vertex_radius'], (255,0,0), -1)
     
     # Draw landmarks

@@ -11,7 +11,15 @@ def add_custom_pin(x, y, state):
     min_dist = float('inf')
     pin_pos = np.array([x, y])
     
+    # Check if we have determined which faces are front-facing
+    # If not, default to all faces being front-facing
+    front_facing = state.front_facing if state.front_facing is not None else np.ones(len(state.faces), dtype=bool)
+    
     for face_idx, (i0, i1, i2) in enumerate(state.faces):
+        # Skip back-facing faces
+        if not front_facing[face_idx]:
+            continue
+            
         v0 = state.verts2d[i0]
         v1 = state.verts2d[i1]
         v2 = state.verts2d[i2]

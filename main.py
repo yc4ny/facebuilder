@@ -25,6 +25,7 @@ class FaceBuilderState:
         self.drag_offset = (0, 0)
         self.custom_pins = []  # List of custom pins [(x, y, face_idx, barycentric_coords), ...]
         self.custom_pin_colors = []  # Color for each custom pin
+        self.front_facing = None  # Boolean mask indicating which faces are front-facing
         
         # Face model variables
         self.landmark_positions = None  # 2D landmark positions for current view
