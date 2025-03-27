@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">Facebuilder Tool</h1>
   <p align="center">
-    <a href="https://www.cubox.ai/"><strong>CUBOX AI Lab</strong></a>
+    <a href="https://www.cubox.ai/"><strong>SECERN AI</strong></a>
   </p>
   <div align="center">
     <img src="./assets/teaser.png" alt="Logo" width="100%">
