@@ -629,6 +629,18 @@ def update_3d_vertices(state, original_verts2d=None):
         
         state.verts3d = updated_verts3d
         
+    # After updating 3D vertices, we need to update front_facing property
+    from utils.geometry import calculate_front_facing
+    if state.camera_matrices[state.current_image_idx] is not None and state.rotations[state.current_image_idx] is not None and state.translations[state.current_image_idx] is not None:
+        state.front_facing = calculate_front_facing(
+            state.verts3d, state.faces,
+            camera_matrix=state.camera_matrices[state.current_image_idx],
+            rvec=state.rotations[state.current_image_idx],
+            tvec=state.translations[state.current_image_idx]
+        )
+    else:
+        state.front_facing = calculate_front_facing(state.verts3d, state.faces)
+        
         
 def project_current_3d_to_2d(state):
     # Skip projection if we've directly manipulated 2D vertices in the two-pin case

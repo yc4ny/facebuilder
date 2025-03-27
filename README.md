@@ -26,6 +26,17 @@ FaceBuilder is a sophisticated 3D face modeling tool developed by Keentools that
 
 FaceBuilder implements an intuitive pin-based interaction system with three specialized manipulation modes:
 
+### Automatic Face Alignment
+
+![align_face](assets/align_face.gif)
+
+- **Detection**: Uses both MediaPipe and dlib for robust 2D face detection in various poses
+- **Multi-stage Alignment**: 
+  - Detects face landmarks automatically in the current image
+  - Performs 3D pose estimation to calculate optimal rotation and translation
+  - Uses PnP (Perspective-n-Point) algorithm to align the 3D mesh with 2D landmarks
+- **Performance Optimized**: Implements caching to avoid redundant calculations when returning to previously aligned views
+
 #### Single Pin (1-Pin) Mode
 
 ![1pin](assets/1pin.gif)

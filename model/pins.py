@@ -186,6 +186,10 @@ def center_geo(state):
     from utils.geometry import ortho
     state.verts2d = ortho(state.verts3d, c3d, c2d, sc)
     
+    # Update front_facing property
+    from utils.geometry import calculate_front_facing
+    state.front_facing = calculate_front_facing(state.verts3d, state.faces)
+    
     # Clear camera parameters for the current image
     state.camera_matrices[state.current_image_idx] = None
     state.rotations[state.current_image_idx] = None
