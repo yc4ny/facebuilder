@@ -3,13 +3,11 @@ import cv2
 import numpy as np
 import dlib
 import mediapipe as mp
-
-# Remove the import of project_current_3d_to_2d from model.mesh
+from model.pins import update_custom_pins
 
 def update_all_landmarks(state):
     """
     Update all predefined landmarks based on the current 3D mesh
-
     """
     # First update the 3D positions of landmarks
     for i in range(len(state.landmark3d)):
@@ -24,19 +22,42 @@ def update_all_landmarks(state):
     rvec = state.rotations[state.current_image_idx]
     tvec = state.translations[state.current_image_idx]
     
-    if camera_matrix is not None and rvec is not None and tvec is not None:
-        # Use perspective projection
-        try:
-            projected_landmarks, _ = cv2.projectPoints(
-                np.array(state.landmark3d, dtype=np.float32),
-                rvec, tvec, camera_matrix, np.zeros((4, 1))
-            )
-            state.landmark_positions = projected_landmarks.reshape(-1, 2)
-        except cv2.error:
-            # Fallback to direct calculation from 2D vertices
-            update_landmarks_from_2d(state)
-    else:
-        # Fallback to direct calculation from 2D vertices
+    # Ensure we have valid camera parameters
+    if camera_matrix is None or rvec is None or tvec is None:
+        # Initialize default camera parameters if not present
+        focal_length = max(state.img_w, state.img_h)
+        camera_matrix = np.array([
+            [focal_length, 0, state.img_w / 2],
+            [0, focal_length, state.img_h / 2],
+            [0, 0, 1]
+        ], dtype=np.float32)
+        
+        # Calculate center of the model
+        center = np.mean(state.verts3d, axis=0)
+        
+        # Initialize rotation (identity rotation)
+        R = np.eye(3, dtype=np.float32)
+        rvec, _ = cv2.Rodrigues(R)
+        
+        # Position the model in front of the camera
+        distance = focal_length * 1.5
+        tvec = np.array([[0, 0, distance]], dtype=np.float32).T - R @ center.reshape(3, 1)
+        
+        # Save camera parameters
+        state.camera_matrices[state.current_image_idx] = camera_matrix
+        state.rotations[state.current_image_idx] = rvec
+        state.translations[state.current_image_idx] = tvec
+    
+    # Use perspective projection
+    try:
+        projected_landmarks, _ = cv2.projectPoints(
+            np.array(state.landmark3d, dtype=np.float32),
+            rvec, tvec, camera_matrix, np.zeros((4, 1))
+        )
+        state.landmark_positions = projected_landmarks.reshape(-1, 2)
+    except cv2.error as e:
+        print(f"Error projecting landmarks: {e}")
+        # Fallback to direct calculation from 2D vertices if projection fails
         update_landmarks_from_2d(state)
 
 def update_landmarks_from_2d(state):
@@ -73,8 +94,8 @@ def align_face(state):
         state.translations[state.current_image_idx] = cached_data['tvec']
         
         # Project current 3D vertices to 2D using these parameters
-        # Use callback instead of direct import to avoid circular dependency
-        state.callbacks['project_2d'](state)
+        if 'project_2d' in state.callbacks:
+            state.callbacks['project_2d'](state)
         
         # Update landmarks
         update_all_landmarks(state)
@@ -85,8 +106,7 @@ def align_face(state):
             print("Landmarks made visible again after using cached alignment")
         
         # Update custom pins
-        state.callbacks['update_custom_pins'](state)
-        state.callbacks['redraw'](state)
+        update_custom_pins(state)
         return
     
     # If we're here, we need to perform a new alignment
@@ -96,15 +116,6 @@ def align_face(state):
     rgb_img = cv2.cvtColor(state.overlay, cv2.COLOR_BGR2RGB)
     # Convert to grayscale for landmark detection with dlib
     gray = cv2.cvtColor(state.overlay, cv2.COLOR_BGR2GRAY)
-    
-    # Initialize MediaPipe face detection if not already initialized
-    if not hasattr(state, 'mp_face_detection'):
-        mp_face_detection = mp.solutions.face_detection
-        state.mp_face_detection = mp_face_detection
-        state.mp_face_detector = mp_face_detection.FaceDetection(
-            min_detection_confidence=0.1,
-            model_selection=0
-        )
     
     # Set a fixed random seed for deterministic behavior
     np.random.seed(42 + state.current_image_idx)
@@ -262,7 +273,14 @@ def align_face(state):
         print(f"Error in 3D pose estimation: {e}")
         print("Using 2D alignment as fallback")
         
-        # Fall back to 2D alignment (original method)
+        # Set up default camera parameters
+        focal_length = max(state.img_w, state.img_h)
+        camera_matrix = np.array([
+            [focal_length, 0, state.img_w / 2],
+            [0, focal_length, state.img_h / 2],
+            [0, 0, 1]
+        ], dtype=np.float32)
+        
         # Calculate centers of both landmark sets
         detected_center = np.mean(dlib_landmarks, axis=0)
         model_center = np.mean(state.landmark_positions_default, axis=0)
@@ -275,21 +293,36 @@ def align_face(state):
         model_scale = np.mean(np.linalg.norm(model_centered, axis=1)) if len(model_centered) > 0 else 1.0
         scale_factor = detected_scale / model_scale if model_scale > 0 else 1.0
         
-        # Apply transformation to vertices and landmarks in 2D
-        translation = detected_center - model_center * scale_factor
-        state.verts2d = (state.verts2d_default - model_center) * scale_factor + detected_center
-        state.landmark_positions = (state.landmark_positions_default - model_center) * scale_factor + detected_center
+        # Create initial rotation (identity rotation)
+        R = np.eye(3, dtype=np.float32)
+        rvec, _ = cv2.Rodrigues(R)
         
-        # Store transformation parameters
-        transform_matrix = np.array([
-            [scale_factor, 0, translation[0]],
-            [0, scale_factor, translation[1]],
-            [0, 0, 1]
-        ], dtype=np.float32)
+        # Calculate model center in 3D
+        model_center_3d = np.mean(state.verts3d_default, axis=0)
         
-        state.camera_matrices[state.current_image_idx] = transform_matrix
-        state.translations[state.current_image_idx] = translation
-        state.rotations[state.current_image_idx] = None
+        # Create translation to position the model
+        translation = np.array([0, 0, focal_length * 1.5])
+        tvec = translation.reshape(3, 1)
+        
+        # Store camera parameters
+        state.camera_matrices[state.current_image_idx] = camera_matrix
+        state.rotations[state.current_image_idx] = rvec
+        state.translations[state.current_image_idx] = tvec
+        
+        # Project 3D vertices to 2D
+        try:
+            projected_verts, _ = cv2.projectPoints(
+                state.verts3d, rvec, tvec, camera_matrix, np.zeros((4, 1))
+            )
+            state.verts2d = projected_verts.reshape(-1, 2)
+            
+            # Apply 2D scaling and translation to better match detected landmarks
+            state.verts2d = (state.verts2d - model_center) * scale_factor + detected_center
+            
+            # Also update landmark positions
+            update_all_landmarks(state)
+        except Exception as e:
+            print(f"Error in 2D fallback alignment: {e}")
     
     # Cache the alignment results in the global cache
     ALIGNMENT_CACHE[cache_key] = {
@@ -304,11 +337,9 @@ def align_face(state):
         print("Landmarks made visible again")
     
     # Update custom pins
-    state.callbacks['update_custom_pins'](state)
+    update_custom_pins(state)
     
     print(f"Alignment complete for image {state.current_image_idx+1}")
-    state.callbacks['redraw'](state)
-
 
 def reset_alignment_cache():
     """Reset the alignment cache to force re-alignment of all images"""

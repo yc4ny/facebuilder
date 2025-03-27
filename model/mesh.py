@@ -1,7 +1,7 @@
 # Copyright (c) CUBOX, Inc. and its affiliates.
 import numpy as np
 import cv2
-from utils.geometry import back_project_2d_to_3d, inverse_ortho
+from utils.geometry import back_project_2d_to_3d
 
 def move_mesh_2d(state, old_lx, old_ly, dx, dy):
     # Check if we're dragging a pin (not a landmark)
@@ -41,9 +41,6 @@ def move_mesh_2d(state, old_lx, old_ly, dx, dy):
                     # Handle with transform_mesh_rigid which now supports 2-pin, 3-pin, and 4+ pin cases
                     try:
                         transform_mesh_rigid(state, pin_idx, old_lx, old_ly, new_x, new_y)
-                        
-                        # Redraw with our 2D changes
-                        state.callbacks['redraw'](state)
                         return
                     except Exception as e:
                         # Revert to original values and fall back to single pin case if there's an error
@@ -159,8 +156,11 @@ def move_mesh_2d(state, old_lx, old_ly, dx, dy):
                                         new_x, new_y, pin_data[2], pin_data[3]
                                     )
                                 
-                                # Update other pins (the dragged pin will be preserved by update_custom_pins)
-                                state.callbacks['update_custom_pins'](state)
+                                # Update other pins
+                                from model.pins import update_custom_pins
+                                from model.landmarks import update_all_landmarks
+                                update_all_landmarks(state)
+                                update_custom_pins(state)
                                 return
                             else:
                                 # Revert to original values if projection is invalid
@@ -360,23 +360,17 @@ def transform_mesh_rigid(state, dragged_pin_idx, old_x, old_y, new_x, new_y):
                             # Set the flag to skip 3D-2D projection cycle
                             state.skip_projection = True
                             
-                            # Add this after setting skip_projection = True
-                            # Update front_facing property directly
+                            # Update backface culling instead of disabling it
                             from utils.geometry import calculate_front_facing
-                            if state.camera_matrices[state.current_image_idx] is not None and state.rotations[state.current_image_idx] is not None and state.translations[state.current_image_idx] is not None:
-                                state.front_facing = calculate_front_facing(
-                                    state.verts3d, state.faces,
-                                    camera_matrix=state.camera_matrices[state.current_image_idx],
-                                    rvec=state.rotations[state.current_image_idx],
-                                    tvec=state.translations[state.current_image_idx]
-                                )
-                            else:
-                                state.front_facing = calculate_front_facing(state.verts3d, state.faces)
+                            state.front_facing = calculate_front_facing(
+                                state.verts3d, state.faces,
+                                camera_matrix=camera_matrix, rvec=new_rvec, tvec=new_tvec
+                            )
                             
                             # Update landmarks and custom pins
                             from model.landmarks import update_all_landmarks
-                            update_all_landmarks(state)
                             from model.pins import update_custom_pins
+                            update_all_landmarks(state)
                             update_custom_pins(state)
                             return
                         else:
@@ -470,26 +464,25 @@ def transform_mesh_rigid(state, dragged_pin_idx, old_x, old_y, new_x, new_y):
         # Set the flag to skip 3D-2D projection cycle
         state.skip_projection = True
         
-        # Add this after setting skip_projection = True
-        # Update front_facing property directly
-        from utils.geometry import calculate_front_facing
-        if state.camera_matrices[state.current_image_idx] is not None and state.rotations[state.current_image_idx] is not None and state.translations[state.current_image_idx] is not None:
-            state.front_facing = calculate_front_facing(
-                state.verts3d, state.faces,
-                camera_matrix=state.camera_matrices[state.current_image_idx],
-                rvec=state.rotations[state.current_image_idx],
-                tvec=state.translations[state.current_image_idx]
-            )
-        else:
-            state.front_facing = calculate_front_facing(state.verts3d, state.faces)
+        # Update backface culling with current camera parameters
+        camera_matrix = state.camera_matrices[state.current_image_idx]
+        rvec = state.rotations[state.current_image_idx]
+        tvec = state.translations[state.current_image_idx]
         
         # Update 3D vertices based on the 2D transformation
         update_3d_vertices(state)
         
+        # After 3D update, calculate which faces are front-facing
+        from utils.geometry import calculate_front_facing
+        state.front_facing = calculate_front_facing(
+            state.verts3d, state.faces,
+            camera_matrix=camera_matrix, rvec=rvec, tvec=tvec
+        )
+        
         # Update landmarks and custom pins
         from model.landmarks import update_all_landmarks
-        update_all_landmarks(state)
         from model.pins import update_custom_pins
+        update_all_landmarks(state)
         update_custom_pins(state)
         return
     
@@ -572,15 +565,25 @@ def transform_mesh_rigid(state, dragged_pin_idx, old_x, old_y, new_x, new_y):
             # Update 3D vertices based on the 2D transformation
             update_3d_vertices(state)
             
+            # After 3D update, calculate which faces are front-facing
+            camera_matrix = state.camera_matrices[state.current_image_idx]
+            rvec = state.rotations[state.current_image_idx]
+            tvec = state.translations[state.current_image_idx]
+            
+            from utils.geometry import calculate_front_facing
+            state.front_facing = calculate_front_facing(
+                state.verts3d, state.faces,
+                camera_matrix=camera_matrix, rvec=rvec, tvec=tvec
+            )
+            
             # Update landmarks and custom pins
             from model.landmarks import update_all_landmarks
-            update_all_landmarks(state)
             from model.pins import update_custom_pins
+            update_all_landmarks(state)
             update_custom_pins(state)
         else:
             print("Transformation would cause vertices to go out of bounds")
             return
-        
 
 def update_3d_vertices(state, original_verts2d=None):
     # Skip 3D update if we've directly manipulated 2D vertices in the two-pin case
@@ -593,53 +596,197 @@ def update_3d_vertices(state, original_verts2d=None):
     rvec = state.rotations[state.current_image_idx]
     tvec = state.translations[state.current_image_idx]
     
-    # Check if we have camera parameters for this view
-    if camera_matrix is not None and rvec is not None and tvec is not None:
-        # Use perspective back-projection when we have camera parameters
-        updated_verts3d = back_project_2d_to_3d(
-            state.verts2d,
-            state.verts3d,  # Use current 3D vertices, not defaults
-            camera_matrix,
-            rvec,
-            tvec
-        )
+    # Ensure we have valid camera parameters
+    if camera_matrix is None or rvec is None or tvec is None:
+        # Initialize default camera parameters if not present
+        focal_length = max(state.img_w, state.img_h)
+        camera_matrix = np.array([
+            [focal_length, 0, state.img_w / 2],
+            [0, focal_length, state.img_h / 2],
+            [0, 0, 1]
+        ], dtype=np.float32)
         
-        if updated_verts3d is not None:
-            # Blend the updated vertices with current vertices to maintain stability
-            blend_factor = 0.8  # 80% new, 20% old - can be adjusted for stability
-            state.verts3d = blend_factor * updated_verts3d + (1 - blend_factor) * state.verts3d
-    else:
-        # Use inverse orthographic projection when no camera parameters
-        # Calculate the model parameters for inverse orthographic projection
-        mn = state.verts3d[:, :2].min(axis=0)
-        mx = state.verts3d[:, :2].max(axis=0)
-        c3d = 0.5 * (mn + mx)
-        s3d = (mx - mn).max()
-        sc = 0.8 * min(state.img_w, state.img_h) / s3d
-        c2d = np.array([state.img_w/2.0, state.img_h/2.0])
+        # Initialize default rotation and translation
+        rvec = np.zeros(3, dtype=np.float32)
+        tvec = np.array([[0, 0, focal_length]], dtype=np.float32).T
         
-        # Use inverse orthographic projection
-        updated_verts3d = inverse_ortho(
-            state.verts2d,
-            state.verts3d,  # Use current 3D vertices, not defaults
-            c3d,
-            c2d,
-            sc
-        )
-        
-        state.verts3d = updated_verts3d
-        
-    # After updating 3D vertices, we need to update front_facing property
+        # Save camera parameters
+        state.camera_matrices[state.current_image_idx] = camera_matrix
+        state.rotations[state.current_image_idx] = rvec
+        state.translations[state.current_image_idx] = tvec
+    
+    # Use perspective back-projection
+    updated_verts3d = back_project_2d_to_3d(
+        state.verts2d,
+        state.verts3d,  # Use current 3D vertices, not defaults
+        camera_matrix,
+        rvec,
+        tvec
+    )
+    
+    if updated_verts3d is not None:
+        # Blend the updated vertices with current vertices to maintain stability
+        blend_factor = 0.8  # 80% new, 20% old - can be adjusted for stability
+        state.verts3d = blend_factor * updated_verts3d + (1 - blend_factor) * state.verts3d
+    
+    # After updating 3D vertices, update front_facing property
     from utils.geometry import calculate_front_facing
-    if state.camera_matrices[state.current_image_idx] is not None and state.rotations[state.current_image_idx] is not None and state.translations[state.current_image_idx] is not None:
+    state.front_facing = calculate_front_facing(
+        state.verts3d, state.faces,
+        camera_matrix=camera_matrix, rvec=rvec, tvec=tvec
+    )
+
+def project_current_3d_to_2d(state):
+    # Skip projection if we've directly manipulated 2D vertices in the two-pin case
+    if hasattr(state, 'skip_projection') and state.skip_projection:
+        state.skip_projection = False
+        return True
+        
+    # Get current camera parameters
+    camera_matrix = state.camera_matrices[state.current_image_idx]
+    rvec = state.rotations[state.current_image_idx]
+    tvec = state.translations[state.current_image_idx]
+    
+    # Ensure we have valid camera parameters
+    if camera_matrix is None or rvec is None or tvec is None:
+        # Initialize default camera parameters if not present
+        focal_length = max(state.img_w, state.img_h)
+        camera_matrix = np.array([
+            [focal_length, 0, state.img_w / 2],
+            [0, focal_length, state.img_h / 2],
+            [0, 0, 1]
+        ], dtype=np.float32)
+        
+        # Calculate center of the model
+        center = np.mean(state.verts3d, axis=0)
+        
+        # Initialize rotation (identity rotation)
+        R = np.eye(3, dtype=np.float32)
+        rvec, _ = cv2.Rodrigues(R)
+        
+        # Set up reasonable distance
+        distance = focal_length * 1.5
+        tvec = np.array([[0, 0, distance]], dtype=np.float32).T - R @ center.reshape(3, 1)
+        
+        # Save camera parameters
+        state.camera_matrices[state.current_image_idx] = camera_matrix
+        state.rotations[state.current_image_idx] = rvec
+        state.translations[state.current_image_idx] = tvec
+    
+    # Use perspective projection
+    from utils.geometry import project_3d_to_2d
+    
+    projected_verts = project_3d_to_2d(
+        state.verts3d,  # Use current 3D vertices, not defaults
+        camera_matrix,
+        rvec,
+        tvec
+    )
+    
+    if projected_verts is not None:
+        state.verts2d = projected_verts
+        
+        # Update backface culling
+        from utils.geometry import calculate_front_facing
         state.front_facing = calculate_front_facing(
             state.verts3d, state.faces,
-            camera_matrix=state.camera_matrices[state.current_image_idx],
-            rvec=state.rotations[state.current_image_idx],
-            tvec=state.translations[state.current_image_idx]
+            camera_matrix=camera_matrix, rvec=rvec, tvec=tvec
         )
-    else:
-        state.front_facing = calculate_front_facing(state.verts3d, state.faces)
+        
+        return True
+    
+    # If projection fails, try with adjusted parameters
+    print("Warning: Initial projection failed. Trying with adjusted parameters.")
+    focal_length = max(state.img_w, state.img_h)
+    center = np.mean(state.verts3d, axis=0)
+    R = np.eye(3, dtype=np.float32)
+    rvec, _ = cv2.Rodrigues(R)
+    distance = focal_length * 2.0
+    tvec = np.array([[0, 0, distance]], dtype=np.float32).T - R @ center.reshape(3, 1)
+    
+    camera_matrix = np.array([
+        [focal_length, 0, state.img_w / 2],
+        [0, focal_length, state.img_h / 2],
+        [0, 0, 1]
+    ], dtype=np.float32)
+    
+    # Save adjusted parameters
+    state.camera_matrices[state.current_image_idx] = camera_matrix
+    state.rotations[state.current_image_idx] = rvec
+    state.translations[state.current_image_idx] = tvec
+    
+    # Try projection again
+    projected_verts = project_3d_to_2d(
+        state.verts3d,
+        camera_matrix,
+        rvec,
+        tvec
+    )
+    
+    if projected_verts is not None:
+        state.verts2d = projected_verts
+        
+        # Update backface culling
+        from utils.geometry import calculate_front_facing
+        state.front_facing = calculate_front_facing(
+            state.verts3d, state.faces,
+            camera_matrix=camera_matrix, rvec=rvec, tvec=tvec
+        )
+        
+        return True
+    
+    # If all else fails, log error but don't crash
+    print("Error: Failed to project 3D to 2D with perspective projection.")
+    return False
+
+
+def update_3d_vertices(state, original_verts2d=None):
+    # Skip 3D update if we've directly manipulated 2D vertices in the two-pin case
+    if hasattr(state, 'skip_projection') and state.skip_projection:
+        state.skip_projection = False
+        return
+        
+    # Get current camera parameters for this view
+    camera_matrix = state.camera_matrices[state.current_image_idx]
+    rvec = state.rotations[state.current_image_idx]
+    tvec = state.translations[state.current_image_idx]
+    
+    # Ensure we have valid camera parameters
+    if camera_matrix is None or rvec is None or tvec is None:
+        # Initialize default camera parameters if not present
+        focal_length = max(state.img_w, state.img_h)
+        camera_matrix = np.array([
+            [focal_length, 0, state.img_w / 2],
+            [0, focal_length, state.img_h / 2],
+            [0, 0, 1]
+        ], dtype=np.float32)
+        
+        # Initialize default rotation and translation
+        rvec = np.zeros(3, dtype=np.float32)
+        tvec = np.array([[0, 0, focal_length]], dtype=np.float32).T
+        
+        # Save camera parameters
+        state.camera_matrices[state.current_image_idx] = camera_matrix
+        state.rotations[state.current_image_idx] = rvec
+        state.translations[state.current_image_idx] = tvec
+    
+    # Use perspective back-projection
+    updated_verts3d = back_project_2d_to_3d(
+        state.verts2d,
+        state.verts3d,  # Use current 3D vertices, not defaults
+        camera_matrix,
+        rvec,
+        tvec
+    )
+    
+    if updated_verts3d is not None:
+        # Blend the updated vertices with current vertices to maintain stability
+        blend_factor = 0.8  # 80% new, 20% old - can be adjusted for stability
+        state.verts3d = blend_factor * updated_verts3d + (1 - blend_factor) * state.verts3d
+    
+    # After updating 3D vertices, update front_facing property
+    # Set all faces as front-facing (no culling)
+    state.front_facing = np.ones(len(state.faces), dtype=bool)
         
         
 def project_current_3d_to_2d(state):
@@ -653,42 +800,83 @@ def project_current_3d_to_2d(state):
     rvec = state.rotations[state.current_image_idx]
     tvec = state.translations[state.current_image_idx]
     
-    # Check if we have camera parameters for this view
-    if camera_matrix is not None and rvec is not None and tvec is not None:
-        # Use perspective projection
-        from utils.geometry import project_3d_to_2d
+    # Ensure we have valid camera parameters
+    if camera_matrix is None or rvec is None or tvec is None:
+        # Initialize default camera parameters if not present
+        focal_length = max(state.img_w, state.img_h)
+        camera_matrix = np.array([
+            [focal_length, 0, state.img_w / 2],
+            [0, focal_length, state.img_h / 2],
+            [0, 0, 1]
+        ], dtype=np.float32)
         
-        projected_verts = project_3d_to_2d(
-            state.verts3d,  # Use current 3D vertices, not defaults
-            camera_matrix,
-            rvec,
-            tvec
-        )
+        # Calculate center of the model
+        center = np.mean(state.verts3d, axis=0)
         
-        if projected_verts is not None:
-            state.verts2d = projected_verts
-            
-            # Calculate which faces are front-facing
-            from utils.geometry import calculate_front_facing
-            state.front_facing = calculate_front_facing(
-                state.verts3d, state.faces,
-                camera_matrix=camera_matrix, rvec=rvec, tvec=tvec
-            )
-            
-            return True
+        # Initialize rotation (identity rotation)
+        R = np.eye(3, dtype=np.float32)
+        rvec, _ = cv2.Rodrigues(R)
+        
+        # Set up reasonable distance
+        distance = focal_length * 1.5
+        tvec = np.array([[0, 0, distance]], dtype=np.float32).T - R @ center.reshape(3, 1)
+        
+        # Save camera parameters
+        state.camera_matrices[state.current_image_idx] = camera_matrix
+        state.rotations[state.current_image_idx] = rvec
+        state.translations[state.current_image_idx] = tvec
     
-    # Fall back to orthographic projection if no camera parameters or projection failed
-    mn = state.verts3d[:, :2].min(axis=0)
-    mx = state.verts3d[:, :2].max(axis=0)
-    c3d = 0.5 * (mn + mx)
-    s3d = (mx - mn).max()
-    sc = 0.8 * min(state.img_w, state.img_h) / s3d
-    c2d = np.array([state.img_w/2.0, state.img_h/2.0])
+    # Use perspective projection
+    from utils.geometry import project_3d_to_2d
     
-    from utils.geometry import ortho, calculate_front_facing
-    state.verts2d = ortho(state.verts3d, c3d, c2d, sc)
+    projected_verts = project_3d_to_2d(
+        state.verts3d,  # Use current 3D vertices, not defaults
+        camera_matrix,
+        rvec,
+        tvec
+    )
     
-    # Calculate which faces are front-facing for orthographic projection
-    state.front_facing = calculate_front_facing(state.verts3d, state.faces)
+    if projected_verts is not None:
+        state.verts2d = projected_verts
+        
+        # Set all faces as front-facing (no culling)
+        state.front_facing = np.ones(len(state.faces), dtype=bool)
+        
+        return True
     
-    return True
+    # If projection fails, try with adjusted parameters
+    print("Warning: Initial projection failed. Trying with adjusted parameters.")
+    focal_length = max(state.img_w, state.img_h)
+    center = np.mean(state.verts3d, axis=0)
+    R = np.eye(3, dtype=np.float32)
+    rvec, _ = cv2.Rodrigues(R)
+    distance = focal_length * 2.0
+    tvec = np.array([[0, 0, distance]], dtype=np.float32).T - R @ center.reshape(3, 1)
+    
+    camera_matrix = np.array([
+        [focal_length, 0, state.img_w / 2],
+        [0, focal_length, state.img_h / 2],
+        [0, 0, 1]
+    ], dtype=np.float32)
+    
+    # Save adjusted parameters
+    state.camera_matrices[state.current_image_idx] = camera_matrix
+    state.rotations[state.current_image_idx] = rvec
+    state.translations[state.current_image_idx] = tvec
+    
+    # Try projection again
+    projected_verts = project_3d_to_2d(
+        state.verts3d,
+        camera_matrix,
+        rvec,
+        tvec
+    )
+    
+    if projected_verts is not None:
+        state.verts2d = projected_verts
+        state.front_facing = np.ones(len(state.faces), dtype=bool)
+        return True
+    
+    # If all else fails, log error but don't crash
+    print("Error: Failed to project 3D to 2D with perspective projection.")
+    return False

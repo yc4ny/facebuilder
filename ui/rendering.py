@@ -15,13 +15,19 @@ def redraw(state):
     # Calculate UI dimensions based on current image size
     ui = state.ui_dimensions
     
-    # Check if we have determined which faces are front-facing
-    # If not, default to showing all faces
-    front_facing = state.front_facing if state.front_facing is not None else np.ones(len(state.faces), dtype=bool)
+    # Calculate which faces are front-facing using the current camera parameters
+    from utils.geometry import calculate_front_facing
+    camera_matrix = state.camera_matrices[state.current_image_idx]
+    rvec = state.rotations[state.current_image_idx]
+    tvec = state.translations[state.current_image_idx]
+    state.front_facing = calculate_front_facing(
+        state.verts3d, state.faces, 
+        camera_matrix=camera_matrix, rvec=rvec, tvec=tvec
+    )
     
     # Draw mesh triangles (only front-facing)
     for i, (i0, i1, i2) in enumerate(state.faces):
-        if front_facing[i]:  # Only draw front-facing faces
+        if state.front_facing[i]:  # Only draw front-facing faces
             p0 = tuple(np.round(state.verts2d[i0]).astype(int))
             p1 = tuple(np.round(state.verts2d[i1]).astype(int))
             p2 = tuple(np.round(state.verts2d[i2]).astype(int))
@@ -32,7 +38,7 @@ def redraw(state):
     # Draw vertices (only those used by front-facing faces)
     visible_vertices = set()
     for i, face in enumerate(state.faces):
-        if front_facing[i]:
+        if state.front_facing[i]:
             visible_vertices.update(face)
     
     for i in visible_vertices:
@@ -175,7 +181,7 @@ def draw_3d_view(state):
     verts_scaled = verts_centered * zoom_scale
     
     # Position the model in front of the camera
-    tvec = np.array([[0, 0, max(state.img_w, state.img_h) * 0.7]], dtype=np.float32).T
+    tvec = np.array([[0, 0, max(state.img_w, state.img_h) * 0.5]], dtype=np.float32).T
     
     # Project the 3D vertices to 2D
     projected_verts, _ = cv2.projectPoints(
@@ -185,7 +191,7 @@ def draw_3d_view(state):
     
     # Calculate which faces are front-facing
     from utils.geometry import calculate_front_facing
-    front_facing = calculate_front_facing(
+    state.front_facing = calculate_front_facing(
         verts_scaled, state.faces, 
         camera_matrix=camera_matrix, rvec=rvec, tvec=tvec
     )
@@ -193,18 +199,20 @@ def draw_3d_view(state):
     # Sort faces by depth for better rendering
     face_depths = []
     for i, (i0, i1, i2) in enumerate(state.faces):
-        # Calculate depth of face center in camera space
-        center_3d = (verts_scaled[i0] + verts_scaled[i1] + verts_scaled[i2]) / 3
-        center_rotated = R @ center_3d
-        depth = center_rotated[2] + tvec[2, 0]  # Z in camera space
-        face_depths.append((i, depth))
+        # Only add front-facing faces to the render list
+        if state.front_facing[i]:
+            # Calculate depth of face center in camera space
+            center_3d = (verts_scaled[i0] + verts_scaled[i1] + verts_scaled[i2]) / 3
+            center_rotated = R @ center_3d
+            depth = center_rotated[2] + tvec[2, 0]  # Z in camera space
+            face_depths.append((i, depth))
     
-    # Sort faces back-to-front
+    # Sort faces back-to-front (only front-facing faces)
     sorted_faces = [idx for idx, _ in sorted(face_depths, key=lambda x: x[1], reverse=True)]
     
     # Draw the mesh triangles with filled polygons
     for face_idx in sorted_faces:
-        # Render all faces, not just front-facing ones
+        # Render only front-facing faces
         i0, i1, i2 = state.faces[face_idx]
         p0 = tuple(np.round(projected_verts[i0]).astype(int))
         p1 = tuple(np.round(projected_verts[i1]).astype(int))

@@ -1,7 +1,8 @@
 # Copyright (c) CUBOX, Inc. and its affiliates.
 import numpy as np
+import pygame
 import cv2 
-from model.mesh import project_current_3d_to_2d, update_3d_vertices
+from model.mesh import project_current_3d_to_2d
 
 
 def add_custom_pin(x, y, state):
@@ -54,7 +55,6 @@ def add_custom_pin(x, y, state):
         state.pins_per_image[state.current_image_idx].append((x, y, closest_face_idx, bc_coords, pin_pos_3d))
         
         print(f"Added pin at ({x}, {y}) to face {closest_face_idx}")
-        state.callbacks['redraw'](state)
     else:
         print("Could not find a face for the pin")
 
@@ -64,6 +64,25 @@ def update_custom_pins(state):
     camera_matrix = state.camera_matrices[state.current_image_idx]
     rvec = state.rotations[state.current_image_idx]
     tvec = state.translations[state.current_image_idx]
+    
+    # Ensure we have valid camera parameters
+    if camera_matrix is None or rvec is None or tvec is None:
+        # Initialize default camera parameters if not present
+        focal_length = max(state.img_w, state.img_h)
+        camera_matrix = np.array([
+            [focal_length, 0, state.img_w / 2],
+            [0, focal_length, state.img_h / 2],
+            [0, 0, 1]
+        ], dtype=np.float32)
+        
+        # Initialize default rotation and translation
+        rvec = np.zeros(3, dtype=np.float32)
+        tvec = np.array([[0, 0, focal_length]], dtype=np.float32).T
+        
+        # Save camera parameters
+        state.camera_matrices[state.current_image_idx] = camera_matrix
+        state.rotations[state.current_image_idx] = rvec
+        state.translations[state.current_image_idx] = tvec
     
     # Check if a pin is being dragged
     is_dragging_pin = (state.drag_index != -1 and 
@@ -89,21 +108,15 @@ def update_custom_pins(state):
         # Calculate 3D position using barycentric coordinates
         pin_pos_3d = bc[0]*v0_3d + bc[1]*v1_3d + bc[2]*v2_3d
         
-        # Project 3D position to 2D based on current view parameters
-        if camera_matrix is not None and rvec is not None and tvec is not None:
-            # Use perspective projection if we have camera parameters
-            try:
-                projected_pin, _ = cv2.projectPoints(
-                    np.array([pin_pos_3d], dtype=np.float32),
-                    rvec, tvec, camera_matrix, np.zeros((4, 1))
-                )
-                new_pos_2d = projected_pin.reshape(-1, 2)[0]
-            except cv2.error:
-                # Fallback to using triangle vertices in 2D
-                v0, v1, v2 = state.verts2d[i0], state.verts2d[i1], state.verts2d[i2]
-                new_pos_2d = bc[0]*v0 + bc[1]*v1 + bc[2]*v2
-        else:
-            # Use triangle vertices in 2D if no camera parameters
+        # Project 3D position to 2D using perspective projection
+        try:
+            projected_pin, _ = cv2.projectPoints(
+                np.array([pin_pos_3d], dtype=np.float32),
+                rvec, tvec, camera_matrix, np.zeros((4, 1))
+            )
+            new_pos_2d = projected_pin.reshape(-1, 2)[0]
+        except cv2.error:
+            # If projection fails, use barycentric interpolation in 2D as fallback
             v0, v1, v2 = state.verts2d[i0], state.verts2d[i1], state.verts2d[i2]
             new_pos_2d = bc[0]*v0 + bc[1]*v1 + bc[2]*v2
         
@@ -155,66 +168,53 @@ def remove_pins(state):
         print("Removed all custom pins from current image")
     else:
         # If no custom pins exist, permanently hide landmark pins
-        # We'll use a simple flag since we can't really delete the landmarks
-        # (they're needed for the underlying mesh structure)
         state.landmark_pins_hidden = True
         
         # Clear alignment cache for this image to force re-alignment next time
-        # This ensures landmarks will be made visible again
         from model.landmarks import clear_image_alignment
         clear_image_alignment(state)
         
         print("Landmark pins removed")
-    
-    # Redraw to update the display
-    state.callbacks['redraw'](state)
 
 def center_geo(state):
-    """Reset the mesh to its default position and clear any camera parameters"""
+    """Reset the mesh to its default position and set up perspective projection"""
     # Reset 3D vertices to default (original model)
     state.verts3d = state.verts3d_default.copy()
     
-    # Calculate initial 2D projection using orthographic projection
-    mn = state.verts3d[:, :2].min(axis=0)
-    mx = state.verts3d[:, :2].max(axis=0)
-    c3d = 0.5 * (mn + mx)
-    s3d = (mx - mn).max()
-    sc = 0.8 * min(state.img_w, state.img_h) / s3d
-    c2d = np.array([state.img_w/2.0, state.img_h/2.0])
+    # Set up proper camera parameters with perspective projection
+    focal_length = max(state.img_w, state.img_h)
+    camera_matrix = np.array([
+        [focal_length, 0, state.img_w / 2],
+        [0, focal_length, state.img_h / 2],
+        [0, 0, 1]
+    ], dtype=np.float32)
     
-    # Use orthographic projection for 2D vertices
-    from utils.geometry import ortho
-    state.verts2d = ortho(state.verts3d, c3d, c2d, sc)
+    # Calculate center of the model
+    center = np.mean(state.verts3d, axis=0)
     
-    # Update front_facing property
-    from utils.geometry import calculate_front_facing
-    state.front_facing = calculate_front_facing(state.verts3d, state.faces)
+    # Initialize rotation (identity rotation)
+    R = np.eye(3, dtype=np.float32)
+    rvec, _ = cv2.Rodrigues(R)
     
-    # Clear camera parameters for the current image
-    state.camera_matrices[state.current_image_idx] = None
-    state.rotations[state.current_image_idx] = None
-    state.translations[state.current_image_idx] = None
+    # Position the model in front of the camera
+    distance = -0.5 
+    tvec = np.array([[0, 0, distance]], dtype=np.float32).T - R @ center.reshape(3, 1)
     
-    # Update landmarks based on reset mesh
-    # First update the 3D positions of landmarks
-    for i in range(len(state.landmark3d_default)):
-        f_idx = state.face_for_lmk[i]
-        bc = state.lmk_b_coords[i]
-        i0, i1, i2 = state.faces[f_idx]
-        v0, v1, v2 = state.verts3d[i0], state.verts3d[i1], state.verts3d[i2]
-        if i < len(state.landmark3d):
-            state.landmark3d[i] = bc[0]*v0 + bc[1]*v1 + bc[2]*v2
+    # Store camera parameters for the current image
+    state.camera_matrices[state.current_image_idx] = camera_matrix
+    state.rotations[state.current_image_idx] = rvec
+    state.translations[state.current_image_idx] = tvec
     
-    # Project landmarks to 2D
-    landmark2d = []
-    for i in range(len(state.landmark3d)):
-        f_idx = state.face_for_lmk[i]
-        bc = state.lmk_b_coords[i]
-        i0, i1, i2 = state.faces[f_idx]
-        v0, v1, v2 = state.verts2d[i0], state.verts2d[i1], state.verts2d[i2]
-        landmark2d.append(bc[0]*v0 + bc[1]*v1 + bc[2]*v2)
+    # Project 3D to 2D using perspective projection
+    if 'project_2d' in state.callbacks:
+        state.callbacks['project_2d'](state)
+    else:
+        from model.mesh import project_current_3d_to_2d
+        project_current_3d_to_2d(state)
     
-    state.landmark_positions = np.array(landmark2d)
+    # Update landmarks
+    from model.landmarks import update_all_landmarks
+    update_all_landmarks(state)
     
     # Make landmarks visible again if they were hidden
     if hasattr(state, 'landmark_pins_hidden'):
@@ -224,8 +224,15 @@ def center_geo(state):
     # Update custom pins
     update_custom_pins(state)
     
-    print("Reset mesh to default position")
-    state.callbacks['redraw'](state)
+    # Calculate which faces are front-facing
+    from utils.geometry import calculate_front_facing
+    state.front_facing = calculate_front_facing(
+        state.verts3d, state.faces,
+        camera_matrix=camera_matrix, rvec=rvec, tvec=tvec
+    )
+    
+    print("Reset mesh to default position with perspective projection")
+    
 
 def reset_shape(state):
     """Reset only the shape parameters while preserving position and orientation"""
@@ -247,44 +254,46 @@ def reset_shape(state):
     # Apply scaling and translation
     state.verts3d = (state.verts3d - default_center_3d) * scale_factor + current_center_3d
     
-    # Check if we have camera parameters for this view
-    if (state.camera_matrices[state.current_image_idx] is not None and 
-        state.rotations[state.current_image_idx] is not None and 
-        state.translations[state.current_image_idx] is not None):
+    # Ensure we have camera parameters for this view
+    camera_matrix = state.camera_matrices[state.current_image_idx]
+    rvec = state.rotations[state.current_image_idx]
+    tvec = state.translations[state.current_image_idx]
+    
+    if camera_matrix is None or rvec is None or tvec is None:
+        # Initialize default camera parameters if not present
+        focal_length = max(state.img_w, state.img_h)
+        camera_matrix = np.array([
+            [focal_length, 0, state.img_w / 2],
+            [0, focal_length, state.img_h / 2],
+            [0, 0, 1]
+        ], dtype=np.float32)
         
-        # Project 3D mesh to 2D using current camera parameters
-        project_current_3d_to_2d(state)
+        # Calculate center of the model
+        center = np.mean(state.verts3d, axis=0)
+        
+        # Initialize rotation (identity rotation)
+        R = np.eye(3, dtype=np.float32)
+        rvec, _ = cv2.Rodrigues(R)
+        
+        # Position the model in front of the camera
+        distance = focal_length * 1.5
+        tvec = np.array([[0, 0, distance]], dtype=np.float32).T - R @ center.reshape(3, 1)
+        
+        # Store camera parameters
+        state.camera_matrices[state.current_image_idx] = camera_matrix
+        state.rotations[state.current_image_idx] = rvec
+        state.translations[state.current_image_idx] = tvec
+    
+    # Project 3D mesh to 2D using perspective projection
+    if 'project_2d' in state.callbacks:
+        state.callbacks['project_2d'](state)
     else:
-        # No camera parameters, use orthographic projection
-        mn = state.verts3d[:, :2].min(axis=0)
-        mx = state.verts3d[:, :2].max(axis=0)
-        c3d = 0.5 * (mn + mx)
-        s3d = (mx - mn).max()
-        sc = 0.8 * min(state.img_w, state.img_h) / s3d
-        c2d = np.array([state.img_w/2.0, state.img_h/2.0])
-        
-        from utils.geometry import ortho
-        state.verts2d = ortho(state.verts3d, c3d, c2d, sc)
+        from model.mesh import project_current_3d_to_2d
+        project_current_3d_to_2d(state)
     
-    # Update landmarks based on reset mesh
-    # First update the 3D positions of landmarks
-    for i in range(len(state.landmark3d)):
-        f_idx = state.face_for_lmk[i]
-        bc = state.lmk_b_coords[i]
-        i0, i1, i2 = state.faces[f_idx]
-        v0, v1, v2 = state.verts3d[i0], state.verts3d[i1], state.verts3d[i2]
-        state.landmark3d[i] = bc[0]*v0 + bc[1]*v1 + bc[2]*v2
-    
-    # Project landmarks to 2D
-    landmark2d = []
-    for i in range(len(state.landmark3d)):
-        f_idx = state.face_for_lmk[i]
-        bc = state.lmk_b_coords[i]
-        i0, i1, i2 = state.faces[f_idx]
-        v0, v1, v2 = state.verts2d[i0], state.verts2d[i1], state.verts2d[i2]
-        landmark2d.append(bc[0]*v0 + bc[1]*v1 + bc[2]*v2)
-    
-    state.landmark_positions = np.array(landmark2d)
+    # Update landmarks
+    from model.landmarks import update_all_landmarks
+    update_all_landmarks(state)
     
     # Make landmarks visible again if they were hidden
     if hasattr(state, 'landmark_pins_hidden'):
@@ -294,8 +303,14 @@ def reset_shape(state):
     # Update custom pins
     update_custom_pins(state)
     
+    # Calculate which faces are front-facing
+    from utils.geometry import calculate_front_facing
+    state.front_facing = calculate_front_facing(
+        state.verts3d, state.faces,
+        camera_matrix=camera_matrix, rvec=rvec, tvec=tvec
+    )
+    
     # Synchronize pins across all views to maintain consistency
     synchronize_pins_across_views(state)
     
     print("Reset mesh shape to default while preserving position and orientation")
-    state.callbacks['redraw'](state)

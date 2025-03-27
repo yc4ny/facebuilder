@@ -2,7 +2,6 @@
 import pickle
 import os
 import cv2
-import numpy as np
 
 def load_images_from_directory(dir_path="images"):
     """Load all images from a directory"""
