@@ -25,7 +25,7 @@ FaceBuilder is a sophisticated 3D face modeling tool developed by Keentools that
 ### Multiview 3D Mesh Editing System 
 ![multiview-edit](assets/multiview-edit.gif)
 
-- Able to deform the mesh using multiview input images**: 
+- Able to deform the mesh using multiview input images: 
   - A single shared 3D mesh maintains consistency between all input images
 
 ### Automatic Face Alignment
