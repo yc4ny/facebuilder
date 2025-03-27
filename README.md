@@ -22,9 +22,11 @@ FaceBuilder is a sophisticated 3D face modeling tool developed by Keentools that
 
 ## Key Features
 
-### Multi-mode Pin System
+### Multiview 3D Mesh Editing System 
+![multiview-edit](assets/multiview-edit.gif)
 
-FaceBuilder implements an intuitive pin-based interaction system with three specialized manipulation modes:
+- Able to deform the mesh using multiview input images**: 
+  - A single shared 3D mesh maintains consistency between all input images
 
 ### Automatic Face Alignment
 
@@ -35,7 +37,10 @@ FaceBuilder implements an intuitive pin-based interaction system with three spec
   - Detects face landmarks automatically in the current image
   - Performs 3D pose estimation to calculate optimal rotation and translation
   - Uses PnP (Perspective-n-Point) algorithm to align the 3D mesh with 2D landmarks
-- **Performance Optimized**: Implements caching to avoid redundant calculations when returning to previously aligned views
+
+### Multi-mode Pin System
+
+FaceBuilder implements an intuitive pin-based interaction system with three specialized manipulation modes:
 
 #### Single Pin (1-Pin) Mode
 
@@ -65,6 +70,6 @@ FaceBuilder implements an intuitive pin-based interaction system with three spec
 ![3pin](assets/3pin.gif)
 
 - **3D Rotation Control**: Dragging the third pin while using two fixed pins as anchor points
-- Uses PnP (Perspective-n-Point) algorithm to calculate accurate 3D rotation and translation
+- Uses PnP algorithm to calculate accurate 3D rotation and translation
 - Maintains proportions while enabling precise mesh control
 - Two non-dragged pins remain exactly fixed in their original positions
