@@ -1,4 +1,10 @@
 # Copyright (c) CUBOX, Inc. and its affiliates.
+"""
+Application state module.
+
+This module defines the FaceBuilderState class which serves as the central
+repository for all application data and state management.
+"""
 import numpy as np
 import cv2
 import dlib
@@ -6,66 +12,94 @@ import mediapipe as mp
 import pygame
 from config import Mode, UI_BUTTON_HEIGHT_RATIO, UI_BUTTON_MARGIN_RATIO, UI_TEXT_SIZE_RATIO, UI_LINE_THICKNESS_RATIO
 from ui.buttons import Button
-from model.pins import synchronize_pins_across_views
-from model.landmarks import update_all_landmarks, align_face
-from model.mesh import project_current_3d_to_2d
-from model.pins import center_geo, reset_shape, remove_pins, update_custom_pins
-from utils.file_io import save_model
 
 class FaceBuilderState:
-    """Class to hold the state of the Face Builder application"""
+    """
+    Application state container class.
+    
+    This class maintains all data related to the application state, including:
+    - 3D model vertices, faces, and landmarks
+    - Camera parameters and transformations
+    - UI elements and configuration
+    - Current view and interaction mode
+    
+    It also provides methods for common state operations like switching images,
+    updating UI, and handling mode changes.
+    """
+    
     def __init__(self):
+        """
+        Initialize a new application state.
+        
+        Creates a new state with default values for all properties.
+        External initialization is required for mesh data and images.
+        """
         # Operation modes
-        self.mode = Mode.MOVE
-        self.drag_index = -1
-        self.drag_offset = (0, 0)
-        self.custom_pins = []
-        self.custom_pin_colors = []
-        self.front_facing = None
-        self.pins_moved = False  # Track if pins have been moved at least once
+        self.mode = Mode.MOVE           # Current operation mode
+        self.drag_index = -1            # Index of pin being dragged (-1 = none)
+        self.drag_offset = (0, 0)       # Offset from mouse to pin position
+        self.custom_pins = []           # List of custom (user-added) pins
+        self.custom_pin_colors = []     # Color for each custom pin
+        self.front_facing = None        # Boolean array indicating which faces are front-facing
+        self.pins_moved = False         # Track if pins have been moved (affects coloring)
         
         # Face model variables
-        self.landmark_positions = None
-        self.landmark3d = None
-        self.verts2d = None
-        self.verts3d = None
-        self.faces = None
-        self.face_for_lmk = None
-        self.lmk_b_coords = None
-        self.overlay = None
-        self.img_h = 0
-        self.img_w = 0
-        self.alpha = 1e-4
-        self.weights = None
+        self.landmark_positions = None  # 2D positions of facial landmarks
+        self.landmark3d = None          # 3D positions of facial landmarks
+        self.verts2d = None             # 2D positions of mesh vertices
+        self.verts3d = None             # 3D positions of mesh vertices
+        self.faces = None               # Face indices (triangles)
+        self.face_for_lmk = None        # Face index for each landmark
+        self.lmk_b_coords = None        # Barycentric coordinates for landmarks
+        self.overlay = None             # Current image being processed
+        self.img_h = 0                  # Height of current image
+        self.img_w = 0                  # Width of current image
+        self.alpha = 1e-4               # Weight parameter for deformation
+        self.weights = None             # Skinning weights for deformation
         
         # Default pose variables - never modified, used for resetting
-        self.verts2d_default = None
-        self.landmark_positions_default = None
-        self.verts3d_default = None
-        self.landmark3d_default = None
+        self.verts2d_default = None     # Default 2D vertex positions
+        self.landmark_positions_default = None  # Default 2D landmark positions
+        self.verts3d_default = None     # Default 3D vertex positions
+        self.landmark3d_default = None  # Default 3D landmark positions
         
         # Multi-view support
-        self.images = []
-        self.pygame_surfaces = []  # To store Pygame surface versions of the images
-        self.current_image_idx = 0
-        self.pins_per_image = []
-        self.camera_matrices = []
-        self.rotations = []
-        self.translations = []
+        self.images = []                # List of input images
+        self.pygame_surfaces = []       # Pygame surfaces for each image
+        self.current_image_idx = 0      # Index of currently active image
+        self.pins_per_image = []        # Custom pins for each image
+        self.camera_matrices = []       # Camera intrinsic matrix for each image
+        self.rotations = []             # Rotation vectors for each image
+        self.translations = []          # Translation vectors for each image
         
         # 3D visualization state variables
-        self.view_3d_rotation_x = np.pi
-        self.view_3d_rotation_y = 0
-        self.view_3d_zoom = 0.7
-        self.drag_start_pos = None
+        self.view_3d_rotation_x = np.pi # Rotation angle around X axis
+        self.view_3d_rotation_y = 0     # Rotation angle around Y axis
+        self.view_3d_zoom = 0.7         # Zoom level for 3D view
+        self.drag_start_pos = None      # Starting position for 3D view drag
         
-        # Flag to track if we're in spherical rotation mode
-        self.is_spherical_rotation = False
+        # Face detection components
+        self._initialize_face_detection()
         
-        # Initialize face detector and predictor
+        # UI elements and dimensions
+        self.ui_dimensions = None       # Calculated dimensions for UI elements
+        self.buttons = []               # List of UI buttons
+        self.fonts = {}                 # Dictionary of fonts for UI rendering
+        
+        # Callbacks for circular dependencies
+        self.callbacks = {}             # Functions to handle specific operations
+    
+    def _initialize_face_detection(self):
+        """
+        Initialize face detection and landmark detection components.
+        
+        Sets up dlib face detector and shape predictor, and MediaPipe face
+        detection if available. These are used for aligning the mesh to faces.
+        """
+        # Initialize face detector
         self.dlib_detector = dlib.get_frontal_face_detector()
         
-        # Try to load the shape predictor
+        # Try to load the shape predictor for facial landmarks
         try:
             self.dlib_predictor = dlib.shape_predictor("data/shape_predictor_68_face_landmarks.dat")
             print("Loaded dlib shape predictor")
@@ -81,7 +115,7 @@ class FaceBuilderState:
             self.mp_face_detection = mp.solutions.face_detection
             self.mp_face_detector = self.mp_face_detection.FaceDetection(
                 min_detection_confidence=0.3,
-                model_selection=1
+                model_selection=1  # Use full range detector
             )
             print("MediaPipe face detection initialized successfully")
         except ImportError:
@@ -89,21 +123,18 @@ class FaceBuilderState:
             print("Continuing with dlib detector only")
             self.mp_face_detection = None
             self.mp_face_detector = None
-        
-        # UI dimensions and elements
-        self.ui_dimensions = None
-        self.buttons = []
-        self.fonts = {}
-        
-        # Set up callbacks for UI interactions
-        self.callbacks = {}
     
     def initialize_ui(self):
-        """Initialize UI elements for Pygame"""
-        # Calculate UI dimensions
+        """
+        Initialize UI elements for Pygame.
+        
+        Calculates UI dimensions, creates fonts, and initializes buttons
+        with appropriate positions and sizes.
+        """
+        # Calculate UI dimensions based on current image size
         self.ui_dimensions = self.calculate_ui_dimensions()
         
-        # Create fonts
+        # Initialize Pygame fonts
         pygame.font.init()
         font_size = int(self.ui_dimensions['text_size'] * 24)
         self.fonts['button'] = pygame.font.SysFont('Arial', font_size)
@@ -113,36 +144,51 @@ class FaceBuilderState:
         self.buttons = []
         
         # Create buttons with their callbacks
+        self._initialize_buttons()
+    
+    def _initialize_buttons(self):
+        """
+        Create all UI buttons with default parameters.
+        
+        The callbacks for these buttons will be set later by the ButtonController.
+        """
+        ui = self.ui_dimensions
+        
+        # Center Geometry button
         self.buttons.append(Button(
-            self.ui_dimensions['center_geo_button_rect'], 
+            ui['center_geo_button_rect'], 
             "Center Geo", 
             self.fonts['button'],
             callback=self.center_geo
         ))
         
+        # Align Face button
         self.buttons.append(Button(
-            self.ui_dimensions['align_button_rect'], 
+            ui['align_button_rect'], 
             "Align Face", 
             self.fonts['button'],
             callback=self.align_face
         ))
         
+        # Reset Shape button
         self.buttons.append(Button(
-            self.ui_dimensions['reset_shape_button_rect'], 
+            ui['reset_shape_button_rect'], 
             "Reset Shape", 
             self.fonts['button'],
             callback=self.reset_shape
         ))
         
+        # Remove Pins button
         self.buttons.append(Button(
-            self.ui_dimensions['remove_pins_button_rect'], 
+            ui['remove_pins_button_rect'], 
             "Remove Pins", 
             self.fonts['button'],
             callback=self.remove_pins
         ))
         
+        # Toggle Pins button (toggle button)
         toggle_button = Button(
-            self.ui_dimensions['toggle_pins_button_rect'], 
+            ui['toggle_pins_button_rect'], 
             "Toggle Pins", 
             self.fonts['button'],
             callback=self.toggle_pins_mode,
@@ -150,29 +196,33 @@ class FaceBuilderState:
         )
         self.buttons.append(toggle_button)
         
+        # Save Mesh button
         self.buttons.append(Button(
-            self.ui_dimensions['save_button_rect'], 
+            ui['save_button_rect'], 
             "Save Mesh", 
             self.fonts['button'],
             callback=self.save_model
         ))
         
+        # Next Image button
         self.buttons.append(Button(
-            self.ui_dimensions['next_img_button_rect'], 
+            ui['next_img_button_rect'], 
             "Next Image", 
             self.fonts['button'],
             callback=self.next_image
         ))
         
+        # Previous Image button
         self.buttons.append(Button(
-            self.ui_dimensions['prev_img_button_rect'], 
+            ui['prev_img_button_rect'], 
             "Prev Image", 
             self.fonts['button'],
             callback=self.prev_image
         ))
         
+        # 3D View button (toggle button)
         visualizer_button = Button(
-            self.ui_dimensions['visualizer_button_rect'], 
+            ui['visualizer_button_rect'], 
             "3D View", 
             self.fonts['button'],
             callback=self.toggle_3d_view_mode,
@@ -181,7 +231,15 @@ class FaceBuilderState:
         self.buttons.append(visualizer_button)
     
     def calculate_ui_dimensions(self):
-        """Calculate UI element dimensions based on image size"""
+        """
+        Calculate UI element dimensions based on image size.
+        
+        This method computes the size and position of all UI elements
+        relative to the current image dimensions to ensure responsive layout.
+        
+        Returns:
+            dict: Dictionary of UI element dimensions and positions
+        """
         # Calculate image diagonal for scale reference
         img_w, img_h = self.img_w, self.img_h
         img_diag = np.sqrt(img_w**2 + img_h**2)
@@ -190,7 +248,7 @@ class FaceBuilderState:
         button_height = int(img_h * UI_BUTTON_HEIGHT_RATIO)
         button_margin = int(img_w * UI_BUTTON_MARGIN_RATIO)
         
-        # Use a smaller text size to prevent overflow
+        # Calculate sizes based on image diagonal
         text_size = max(0.4, img_diag * UI_TEXT_SIZE_RATIO * 0.6)
         text_thickness = max(1, int(img_diag * 0.0005))
         line_thickness = max(1, int(img_diag * UI_LINE_THICKNESS_RATIO))
@@ -198,12 +256,13 @@ class FaceBuilderState:
         landmark_radius = max(3, int(img_diag * 0.002))
         pin_radius = max(3, int(img_diag * 0.002))
         
-        # Simple fixed-width buttons
-        button_width = int(button_height * 1.8)  # Standard width for most buttons
+        # Standard button width
+        button_width = int(button_height * 1.8)
         
         # Calculate button positions - all in one row
         current_x = button_margin
         
+        # Position each button sequentially
         # Center Geo button (1st)
         center_geo_button_rect = (current_x, button_margin, button_width, button_height)
         current_x += button_width + button_margin
@@ -244,6 +303,7 @@ class FaceBuilderState:
         status_text_y1 = button_margin + int(button_height * 0.75)
         status_text_y2 = status_text_y1 + button_height
         
+        # Return dictionary of all UI dimensions
         return {
             'center_geo_button_rect': center_geo_button_rect,
             'align_button_rect': align_button_rect,
@@ -264,8 +324,16 @@ class FaceBuilderState:
         }
     
     def update_ui(self):
-        """Update UI after changing image or mode"""
+        """
+        Update UI after changing image or mode.
+        
+        Recalculates UI dimensions based on the current image size and
+        updates button states to reflect the current application mode.
+        """
+        # Recalculate UI dimensions for new image
         self.ui_dimensions = self.calculate_ui_dimensions()
+        
+        # Reinitialize all UI elements
         self.initialize_ui()
         
         # Update button states based on current mode
@@ -276,47 +344,95 @@ class FaceBuilderState:
                 button.is_active = (self.mode == Mode.VIEW_3D)
     
     def next_image(self, state=None):
-        """Switch to the next image"""
+        """
+        Switch to the next image in the sequence.
+        
+        Updates current image index, loads the image, and ensures
+        the mesh is properly projected for the new view.
+        
+        Args:
+            state: Optional state parameter for button callback compatibility
+        """
         if self.current_image_idx < len(self.images) - 1:
+            # Increment image index
             self.current_image_idx += 1
-            # Convert OpenCV image to Pygame surface
+            
+            # Update the current image
             self.update_current_image()
             
             # Project the current 3D model to 2D for this view
+            # Import here to avoid circular import
+            from model.mesh import project_current_3d_to_2d
             project_current_3d_to_2d(self)
             
             # Update landmarks for the new view
+            # Import here to avoid circular import
+            from model.landmarks import update_all_landmarks
             update_all_landmarks(self)
             
             # Update UI dimensions for the new image size
             self.update_ui()
     
     def prev_image(self, state=None):
-        """Switch to the previous image"""
+        """
+        Switch to the previous image in the sequence.
+        
+        Updates current image index, loads the image, and ensures
+        the mesh is properly projected for the new view.
+        
+        Args:
+            state: Optional state parameter for button callback compatibility
+        """
         if self.current_image_idx > 0:
+            # Decrement image index
             self.current_image_idx -= 1
-            # Convert OpenCV image to Pygame surface
+            
+            # Update the current image
             self.update_current_image()
             
             # Project the current 3D model to 2D for this view
+            # Import here to avoid circular import
+            from model.mesh import project_current_3d_to_2d
             project_current_3d_to_2d(self)
             
             # Update landmarks for the new view
+            # Import here to avoid circular import
+            from model.landmarks import update_all_landmarks
             update_all_landmarks(self)
             
             # Update UI dimensions for the new image size
             self.update_ui()
 
     def update_current_image(self):
-        """Update the current image and overlay surface"""
+        """
+        Update the current image and overlay surface.
+        
+        Sets the current overlay image based on the current image index
+        and updates image dimensions.
+        """
+        # Copy the current image to the overlay
         self.overlay = self.images[self.current_image_idx].copy()
+        
+        # Update image dimensions
         self.img_h, self.img_w = self.overlay.shape[:2]
     
     def save_model(self, state=None):
-        """Save the current 3D model to file"""
+        """
+        Save the current 3D model to file.
+        
+        Synchronizes pins across all views before saving to ensure
+        consistency, then saves the model data to disk.
+        
+        Args:
+            state: Optional state parameter for button callback compatibility
+        """
         # Make sure pins are up-to-date across all views before saving
+        # Import here to avoid circular import
+        from model.pins import synchronize_pins_across_views
         synchronize_pins_across_views(self)
         
+        # Import here to avoid circular import
+        from utils.file_io import save_model
         save_model(
             self.verts2d, 
             self.verts3d,
@@ -328,12 +444,32 @@ class FaceBuilderState:
         )
     
     def toggle_pins_mode(self, state=None):
-        """Toggle between pin modes"""
+        """
+        Toggle between pin manipulation modes.
+        
+        Switches between normal mesh manipulation mode and pin toggle mode,
+        which allows moving pins without affecting the mesh.
+        
+        Args:
+            state: Optional state parameter for button callback compatibility
+        """
+        # Toggle between MOVE and TOGGLE_PINS modes
         self.mode = Mode.TOGGLE_PINS if self.mode != Mode.TOGGLE_PINS else Mode.MOVE
+        
+        # Update UI to reflect mode change
         self.update_ui()
     
     def toggle_3d_view_mode(self, state=None):
-        """Toggle 3D view mode"""
+        """
+        Toggle 3D view mode.
+        
+        Switches between normal mesh editing mode and 3D visualization mode,
+        initializing rotation angles if entering 3D mode for the first time.
+        
+        Args:
+            state: Optional state parameter for button callback compatibility
+        """
+        # Toggle between MOVE and VIEW_3D modes
         self.mode = Mode.VIEW_3D if self.mode != Mode.VIEW_3D else Mode.MOVE
         
         # Initialize rotation angles if first time entering 3D mode
@@ -341,26 +477,64 @@ class FaceBuilderState:
             self.view_3d_rotation_x = 0.0
             self.view_3d_rotation_y = 0.0
         
+        # Update UI to reflect mode change
         self.update_ui()
     
     def center_geo(self, state=None):
-        """Reset the mesh to its default position"""
+        """
+        Reset the mesh to its default position.
+        
+        Args:
+            state: Optional state parameter for button callback compatibility
+        """
+        # Import here to avoid circular import
+        from model.pins import center_geo
         center_geo(self)
         
     def align_face(self, state=None):
-        """Align the face mesh to detected landmarks"""
+        """
+        Align the face mesh to detected landmarks.
+        
+        Args:
+            state: Optional state parameter for button callback compatibility
+        """
+        # Import here to avoid circular import
+        from model.landmarks import align_face
         align_face(self)
         
     def reset_shape(self, state=None):
-        """Reset the mesh shape while preserving position"""
+        """
+        Reset the mesh shape while preserving position.
+        
+        Args:
+            state: Optional state parameter for button callback compatibility
+        """
+        # Import here to avoid circular import
+        from model.pins import reset_shape
         reset_shape(self)
         
     def remove_pins(self, state=None):
-        """Remove custom pins from the current image"""
+        """
+        Remove custom pins from the current image.
+        
+        Args:
+            state: Optional state parameter for button callback compatibility
+        """
+        # Import here to avoid circular import
+        from model.pins import remove_pins
         remove_pins(self)
         
     def is_single_pin_active(self):
-        """Check if only a single pin is active in the current view"""
+        """
+        Check if only a single pin is active in the current view.
+        
+        This is used to determine the appropriate manipulation mode
+        based on the number of active pins.
+        
+        Returns:
+            bool: True if exactly one pin is active, False otherwise
+        """
+        # Count custom pins
         custom_pin_count = len(self.pins_per_image[self.current_image_idx])
         
         # Check if landmarks are hidden

@@ -1,24 +1,36 @@
 # Copyright (c) CUBOX, Inc. and its affiliates.
+"""
+Geometry utility module.
+
+This module provides core geometric operations for 3D mesh processing,
+including projection, back-projection, face culling, and mesh manipulation.
+"""
 import numpy as np
 import cv2
 
 def project_3d_to_2d(verts3d, camera_matrix, rvec, tvec):
     """
-    Project 3D vertices to 2D using camera parameters
+    Project 3D vertices to 2D using camera parameters.
+    
+    Implements perspective projection using the pinhole camera model:
+    x' = K[R|t]X, where K is the camera matrix, [R|t] is the extrinsic matrix,
+    and X is the 3D point in homogeneous coordinates.
     
     Args:
-        verts3d: 3D vertices
-        camera_matrix: Camera intrinsic matrix
-        rvec: Rotation vector
-        tvec: Translation vector
+        verts3d: 3D vertices as numpy array
+        camera_matrix: Camera intrinsic matrix (3x3)
+        rvec: Rotation vector (3x1)
+        tvec: Translation vector (3x1)
         
     Returns:
-        2D projected vertices
+        numpy.ndarray: 2D projected vertices, or None if projection fails
     """
     if rvec is None or tvec is None:
         return None
         
     try:
+        # Use OpenCV's projectPoints function for accurate perspective projection
+        # This includes distortion correction, though we use zero distortion
         projected_verts, _ = cv2.projectPoints(
             np.array(verts3d, dtype=np.float32),
             rvec, tvec, camera_matrix, np.zeros((4, 1))
@@ -29,8 +41,11 @@ def project_3d_to_2d(verts3d, camera_matrix, rvec, tvec):
 
 def back_project_2d_to_3d(verts2d, verts3d_ref, camera_matrix, rvec, tvec):
     """
-    Back-project 2D points to 3D using reference 3D points
-    For spherical rotation, preserves the distance from center
+    Back-project 2D points to 3D using reference 3D points.
+    
+    Uses ray-casting to find the 3D points that project to the given 2D points.
+    Since perspective projection loses depth information, this uses the
+    reference 3D points to help determine appropriate depth values.
     
     Args:
         verts2d: Current 2D vertices
@@ -40,7 +55,7 @@ def back_project_2d_to_3d(verts2d, verts3d_ref, camera_matrix, rvec, tvec):
         tvec: Translation vector
         
     Returns:
-        Updated 3D vertices
+        numpy.ndarray: Updated 3D vertices, or None if back-projection fails
     """
     if rvec is None or tvec is None:
         return None
@@ -49,37 +64,25 @@ def back_project_2d_to_3d(verts2d, verts3d_ref, camera_matrix, rvec, tvec):
     verts2d = np.array(verts2d, dtype=np.float32)
     verts3d_ref = np.array(verts3d_ref, dtype=np.float32)
     
-    # Detect if we're in spherical rotation mode by checking landmark movements
-    # In spherical rotation, vertices maintain distance from center
-    # First, compute center of mass for original and current 3D vertices
+    # Compute center of mass of the original 3D vertices
     com_orig = np.mean(verts3d_ref, axis=0)
     
     # Get the rotation matrix from rotation vector
     R, _ = cv2.Rodrigues(rvec)
     R_inv = np.linalg.inv(R)
     
-    # Check if we're doing a spherical rotation
-    # In that case, we'll preserve distances from the center
-    is_spherical_rotation = False
-    
-    # Count how many vertices have significantly changed distance from center in 2D
-    # If fewer than 5% have changed, we're likely doing a spherical rotation
-    center_2d = np.mean(verts2d, axis=0)
-    dist_2d = np.linalg.norm(verts2d - center_2d, axis=1)
-    
-    # Create a new 3D vertices array based on the back-projection
-    verts3d_new = verts3d_ref.copy()
-    
-    # Determine transformation type based on movement patterns
-    # Get camera parameters
-    fx = camera_matrix[0, 0]
-    fy = camera_matrix[1, 1]
-    cx = camera_matrix[0, 2]
-    cy = camera_matrix[1, 2]
+    # Extract camera parameters
+    fx = camera_matrix[0, 0]  # Focal length in x direction
+    fy = camera_matrix[1, 1]  # Focal length in y direction
+    cx = camera_matrix[0, 2]  # Principal point x-coordinate
+    cy = camera_matrix[1, 2]  # Principal point y-coordinate
 
-    
-    # Camera center in world coordinates
+    # Calculate camera center in world coordinates
+    # C = -R^T * t
     camera_center = -R_inv.dot(tvec).ravel()
+    
+    # Create a new 3D vertices array for the result
+    verts3d_new = verts3d_ref.copy()
     
     # For each vertex, find the best 3D position
     for i in range(len(verts2d)):
@@ -87,9 +90,12 @@ def back_project_2d_to_3d(verts2d, verts3d_ref, camera_matrix, rvec, tvec):
         x, y = verts2d[i]
         
         # Create ray direction in camera coordinates
+        # ray_camera = [(x-cx)/fx, (y-cy)/fy, 1.0]
+        # This is the direction from camera center to the point on image plane
         ray_camera = np.array([(x - cx) / fx, (y - cy) / fy, 1.0])
         
         # Transform ray to world coordinates
+        # ray_world = R^T * ray_camera
         ray_world = R_inv.dot(ray_camera)
         ray_world = ray_world / np.linalg.norm(ray_world)  # Normalize
         
@@ -103,49 +109,44 @@ def back_project_2d_to_3d(verts2d, verts3d_ref, camera_matrix, rvec, tvec):
         dist_from_center = np.linalg.norm(orig_pos - com_orig)
         
         # Project w onto ray_world to find closest point on ray
+        # length = w · ray_world
+        # This gives the scalar projection of w onto ray_world
         proj_length = np.dot(w, ray_world)
         
         # Calculate the closest point on the ray
+        # point = camera_center + length * ray_world
         closest_point = camera_center + proj_length * ray_world
         
-        # For spherical rotation: preserve distance from center
-        # Find the point on the ray that preserves the distance from the center
-        if is_spherical_rotation:
-            # Direction from center to the point on the ray
-            dir_to_ray = closest_point - com_orig
-            dir_to_ray = dir_to_ray / np.linalg.norm(dir_to_ray)
-            
-            # Place point at the correct distance from center
-            spherical_point = com_orig + dir_to_ray * dist_from_center
-            
-            # Update the vertex
-            verts3d_new[i] = spherical_point
-        else:
-            # Standard back-projection - use closest point on ray
-            verts3d_new[i] = closest_point
+        # Standard back-projection - use closest point on ray
+        verts3d_new[i] = closest_point
     
     return verts3d_new
 
 def calculate_front_facing(verts3d, faces, camera_matrix=None, rvec=None, tvec=None):
     """
-    Calculate which faces are front-facing (facing the camera)
+    Calculate which faces are front-facing (facing the camera).
+    
+    Uses the face normal and view direction to determine if a face is visible.
+    A face is front-facing if the dot product of its normal and the view
+    direction is positive.
     
     Args:
         verts3d: 3D vertices
-        faces: Face indices
+        faces: Face indices (triangles)
         camera_matrix: Camera intrinsic matrix (optional)
         rvec: Rotation vector (optional)
         tvec: Translation vector (optional)
         
     Returns:
-        Boolean array indicating which faces are front-facing
+        numpy.ndarray: Boolean array indicating which faces are front-facing
     """
-    # If we have camera parameters, use them to determine camera position in world space
+    # If we have camera parameters, determine camera position in world space
     if rvec is not None and tvec is not None:
         # Convert rotation vector to rotation matrix
         R, _ = cv2.Rodrigues(rvec)
         
         # Calculate camera position in world coordinates
+        # C = -R^T * t
         camera_center = -R.T.dot(tvec).ravel()
     else:
         # Default camera position along the z-axis
@@ -160,7 +161,8 @@ def calculate_front_facing(verts3d, faces, camera_matrix=None, rvec=None, tvec=N
         v1 = verts3d[i1]
         v2 = verts3d[i2]
         
-        # Calculate face normal using cross product
+        # Calculate face normal using cross product of edges
+        # n = (v1-v0) × (v2-v0) / ||(v1-v0) × (v2-v0)||
         edge1 = v1 - v0
         edge2 = v2 - v0
         normal = np.cross(edge1, edge2)
@@ -188,7 +190,10 @@ def calculate_front_facing(verts3d, faces, camera_matrix=None, rvec=None, tvec=N
 
 def remove_eyeballs(verts, faces, start_idx=3931, end_idx=5022):
     """
-    Remove eyeball vertices from the mesh and update faces accordingly
+    Remove eyeball vertices from the mesh and update faces accordingly.
+    
+    Removes the specified range of vertices (typically eyeball vertices in
+    FLAME models) and updates face indices to maintain mesh connectivity.
     
     Args:
         verts: Array of vertex positions
@@ -197,24 +202,25 @@ def remove_eyeballs(verts, faces, start_idx=3931, end_idx=5022):
         end_idx: End index of eyeball vertices (inclusive)
         
     Returns:
-        new_verts: Updated vertices array without eyeball vertices
-        new_faces: Updated faces array with adjusted indices
+        tuple: (new_verts, new_faces) - Updated vertices and faces arrays
     """
     # Create a mask for vertices to keep
     keep_mask = np.ones(verts.shape[0], dtype=bool)
     keep_mask[start_idx:end_idx+1] = False
     
     # Create index mapping from old to new vertex indices
+    # For each vertex we keep, store its new index after removal
     old_to_new = np.cumsum(keep_mask) - 1
     
-    # Get new vertices
+    # Get new vertices by applying the mask
     new_verts = verts[keep_mask]
     
-    # Keep only faces that don't use eyeball vertices
+    # Keep only faces that don't use eyeball vertices and remap indices
     valid_faces = []
     for face in faces:
+        # Check if all vertices in this face are outside the eyeball range
         if np.all((face < start_idx) | (face > end_idx)):
-            # Remap vertex indices
+            # Remap vertex indices to the new numbering
             new_face = [old_to_new[idx] for idx in face]
             valid_faces.append(new_face)
     
