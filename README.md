@@ -8,10 +8,8 @@
   </div>
 
   <p align="center">
-    <a href='https://github.com/yc4ny/facebuilder'>
+    <a href='https://github.com/CUBOX-Co-Ltd/facebuilder'>
       <img src='https://img.shields.io/badge/GitHub-Code-black?style=flat&logo=github&logoColor=white'></a>
-    <a href="" target='_blank'>
-      <img src="https://visitor-badge.laobi.icu/badge?page_id=yc4ny.facebuilder&left_color=gray&right_color=orange">
     </a>
   </p>
 </p>
@@ -19,6 +17,40 @@
 ## Overview
 
 FaceBuilder is a sophisticated 3D face modeling tool developed by Keentools that allows precise manipulation of 3D facial meshes using a pin-based deformation system. The tool supports interactive mesh editing across multiple views with synchronized 3D consistency.
+
+## Installation 
+
+### Requirements
+- Python 3.10
+
+### Environment Setup
+First you need to clone the repo:
+```
+git clone https://github.com/CUBOX-Co-Ltd/facebuilder.git
+cd facebuilder
+```
+
+Our default installation method is based on Conda package and environment management:
+```bash
+conda create -n facebuilder python==3.10
+conda activate facebuilder
+pip install -r requirements.txt
+conda install -c conda-forge dlib # For dlib face landmark detector
+pip uninstall numpy
+pip install numpy==1.23.5 # Downgrade numpy to avoid error: cannot import name 'bool' from 'numpy'
+```
+
+### Downloads
+You can download the required files to run this code with:
+```bash
+gdown --folder https://drive.google.com/drive/folders/1gFWdesO6VDmebMvpWaN34QNBCvoDfqyr?usp=sharing
+```
+
+## Run Application
+You can run the application with: 
+```bash
+python main.py
+```
 
 ## Key Features
 
