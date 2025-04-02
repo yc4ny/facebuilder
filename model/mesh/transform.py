@@ -1,5 +1,5 @@
-# Copyright (c) CUBOX, Inc. and its affiliates.
 """
+Copyright (c) SECERN AI, Inc. and its affiliates.
 Mesh transformation module.
 
 This module provides functionality for rigid transformations of the 3D mesh

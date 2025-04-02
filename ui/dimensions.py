@@ -1,5 +1,5 @@
-# Copyright (c) CUBOX, Inc. and its affiliates.
 """
+Copyright (c) SECERN AI, Inc. and its affiliates.
 UI dimensions calculation module.
 
 This module provides functions to compute UI element dimensions based on

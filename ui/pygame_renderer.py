@@ -1,5 +1,5 @@
-# Copyright (c) CUBOX, Inc. and its affiliates.
 """
+Copyright (c) SECERN AI, Inc. and its affiliates.
 Pygame rendering module.
 
 This module handles rendering of the 3D mesh, UI elements, and 3D visualization

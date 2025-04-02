@@ -1,5 +1,5 @@
-# Copyright (c) CUBOX, Inc. and its affiliates.
 """
+Copyright (c) SECERN AI, Inc. and its affiliates.
 File input/output module.
 
 This module handles loading images, saving 3D models, and exporting mesh data

@@ -1,5 +1,5 @@
-# Copyright (c) CUBOX, Inc. and its affiliates.
 """
+Copyright (c) SECERN AI, Inc. and its affiliates.
 Facial landmarks module.
 
 This module manages the detection, tracking, and updating of facial landmarks

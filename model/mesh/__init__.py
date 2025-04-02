@@ -1,4 +1,4 @@
-# Copyright (c) CUBOX, Inc. and its affiliates.
+# Copyright (c) SECERN AI, Inc. and its affiliates.
 from model.mesh.projection import project_current_3d_to_2d
 from model.mesh.transform import transform_mesh_rigid
 from model.mesh.deformation import move_mesh_2d, update_3d_vertices

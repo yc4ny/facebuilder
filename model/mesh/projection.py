@@ -1,5 +1,5 @@
-# Copyright (c) CUBOX, Inc. and its affiliates.
 """
+Copyright (c) SECERN AI, Inc. and its affiliates.
 Mesh projection module.
 
 This module handles the projection of 3D mesh vertices to 2D screen coordinates

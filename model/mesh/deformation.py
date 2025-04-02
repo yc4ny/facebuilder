@@ -1,5 +1,5 @@
-# Copyright (c) CUBOX, Inc. and its affiliates.
 """
+Copyright (c) SECERN AI, Inc. and its affiliates.
 Mesh deformation module.
 
 This module provides functionality for deforming the 3D mesh based on pin movements,
