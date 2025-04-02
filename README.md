@@ -8,7 +8,7 @@
   </div>
 
   <p align="center">
-    <a href='https://github.com/CUBOX-Co-Ltd/facebuilder'>
+    <a href='https://github.com/yc4ny/facebuilder'>
       <img src='https://img.shields.io/badge/GitHub-Code-black?style=flat&logo=github&logoColor=white'></a>
     </a>
   </p>
