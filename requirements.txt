@@ -1,0 +1,7 @@
+opencv-python
+pygame
+cmake 
+mediapipe
+gdown
+chumpy
+numpy==1.23.5
