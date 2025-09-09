@@ -39,7 +39,6 @@ venv.bak/
 .settings/
 
 output/
-*.pkl
 *.obj
 
 screenshots/

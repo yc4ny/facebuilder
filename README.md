@@ -42,10 +42,12 @@ pip uninstall numpy
 pip install numpy==1.23.5 # Downgrade numpy to avoid error: cannot import name 'bool' from 'numpy'
 ```
 
-### Downloads
-You can download the required files to run this code with:
+### Models
+This repo uses Git LFS to store large binaries (e.g., .pkl, .pt, .onnx).
+Make sure you have Git LFS installed before cloning:
 ```bash
-gdown --folder https://drive.google.com/drive/folders/1gFWdesO6VDmebMvpWaN34QNBCvoDfqyr?usp=sharing
+git lfs install
+git lfs pull
 ```
 
 ## Run Application
